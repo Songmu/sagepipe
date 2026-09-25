@@ -1,0 +1,23 @@
+name: Set up sagepipe
+description: Install sagepipe and add it to PATH
+author: "Songmu"
+
+runs:
+  using: composite
+  steps:
+    - name: Install sagepipe
+      shell: bash
+      run: |
+        version="v0.0.0"
+        bindir="${RUNNER_TEMP%/}/sagepipe/bin"
+
+        sh "${GITHUB_ACTION_PATH}/install.sh" \
+          -b "${bindir}" "${version}"
+        echo "${bindir}" >> "${GITHUB_PATH}"
+      env:
+        # Authenticate gh attestation verify.
+        GH_TOKEN: ${{ github.token }}
+
+branding:
+  icon: package
+  color: blue
