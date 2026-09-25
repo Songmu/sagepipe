@@ -15,6 +15,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/Songmu/sagepipe/internal/agent/process"
 )
 
 const (
@@ -81,8 +83,8 @@ func Execute(ctx context.Context, product string, opts Options, args []string, s
 	cmd := exec.CommandContext(ctx, opts.Program, args...)
 	cmd.Dir = opts.Dir
 	cmd.Stdin = stdin
-	configureSubprocess(cmd)
-	cmd.Cancel = func() error { return terminateSubprocess(cmd) }
+	process.Configure(cmd)
+	cmd.Cancel = func() error { return process.Terminate(cmd) }
 	cmd.WaitDelay = subprocessWaitDelay
 	stdout, stdoutWriter := io.Pipe()
 	stderr, stderrWriter := io.Pipe()
@@ -99,7 +101,7 @@ func Execute(ctx context.Context, product string, opts Options, args []string, s
 	go func() {
 		waitErr := cmd.Wait()
 		if waitErr != nil {
-			terminateSubprocess(cmd)
+			process.Terminate(cmd)
 		}
 		stdoutWriter.Close()
 		stderrWriter.Close()
@@ -111,11 +113,11 @@ func Execute(ctx context.Context, product string, opts Options, args []string, s
 		defer stderr.Close()
 		n, err := io.Copy(io.Discard, io.LimitReader(stderr, maxStderrBytes+1))
 		if n > maxStderrBytes {
-			terminateSubprocess(cmd)
+			process.Terminate(cmd)
 			stderrDone <- errStderrLimit
 		} else {
 			if err != nil {
-				terminateSubprocess(cmd)
+				process.Terminate(cmd)
 			}
 			stderrDone <- err
 		}
@@ -144,7 +146,7 @@ func Execute(ctx context.Context, product string, opts Options, args []string, s
 	}
 	if readErr != nil {
 		stdout.Close()
-		terminateSubprocess(cmd)
+		process.Terminate(cmd)
 	}
 	stderrErr := <-stderrDone
 	waitErr := <-waitDone

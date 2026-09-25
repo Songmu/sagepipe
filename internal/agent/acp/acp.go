@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/Songmu/sagepipe/internal/agent"
+	"github.com/Songmu/sagepipe/internal/agent/process"
 	sdk "github.com/coder/acp-go-sdk"
 )
 
@@ -115,6 +116,7 @@ func (r *runner) start(ctx context.Context) error {
 	cmd := exec.Command(r.command, r.args...)
 	cmd.Dir = r.cwd
 	cmd.Stderr = io.Discard
+	process.Configure(cmd)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return errors.New("open ACP input pipe: failed")
@@ -448,7 +450,7 @@ func (r *runner) stopProcess(recycle bool) {
 	if r.cmd != nil && !r.waited {
 		r.stdin.Close()
 		r.stdout.Close()
-		r.cmd.Process.Kill()
+		process.Terminate(r.cmd)
 		r.cmd.Wait()
 		r.waited = true
 	}

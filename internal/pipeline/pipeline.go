@@ -19,6 +19,8 @@ type processor struct {
 	ctx          context.Context
 	cfg          config.Config
 	input        *bufio.Reader
+	readRequests chan readRequest
+	readDone     chan struct{}
 	output       io.Writer
 	diag         *diagnostics
 	runner       agent.Runner
@@ -36,16 +38,28 @@ type record struct {
 	line  int
 }
 
+type readRequest struct {
+	max    int64
+	result chan readResult
+}
+
+type readResult struct {
+	line inputLine
+	err  error
+}
+
 // Run processes a stream and returns 0 for success, 1 for completed runs with
 // rejected input records, or 2 for failures that prevent completing the run.
 func Run(ctx context.Context, cfg config.Config, in io.Reader, out, errOut io.Writer, runner agent.Runner) (status int) {
 	p := &processor{
-		ctx:    ctx,
-		cfg:    cfg,
-		input:  bufio.NewReader(in),
-		output: out,
-		diag:   newDiagnostics(errOut),
-		runner: runner,
+		ctx:          ctx,
+		cfg:          cfg,
+		input:        bufio.NewReader(in),
+		readRequests: make(chan readRequest),
+		readDone:     make(chan struct{}),
+		output:       out,
+		diag:         newDiagnostics(errOut),
+		runner:       runner,
 	}
 	defer func() {
 		if err := runner.Close(); err != nil {
@@ -54,6 +68,8 @@ func Run(ctx context.Context, cfg config.Config, in io.Reader, out, errOut io.Wr
 		}
 		status = p.finish(status)
 	}()
+	go p.readInput()
+	defer close(p.readDone)
 	inSchema, err := compileSchema(cfg.InputSchema)
 	if err != nil {
 		p.diag.log(slog.LevelError, "invalid_input_schema", "config", err.Error(), 0)
@@ -109,12 +125,42 @@ func (p *processor) next(max int64) (inputLine, error) {
 	if err := p.ctx.Err(); err != nil {
 		return inputLine{}, err
 	}
-	line, err := nextLine(p.input, max)
-	if err == nil {
-		p.lineNo++
-		p.rawBytes += line.rawBytes
+	result := make(chan readResult, 1)
+	select {
+	case p.readRequests <- readRequest{max, result}:
+	case <-p.ctx.Done():
+		return inputLine{}, p.ctx.Err()
 	}
-	return line, err
+	var read readResult
+	select {
+	case read = <-result:
+	case <-p.ctx.Done():
+		return inputLine{}, p.ctx.Err()
+	}
+	if ctxErr := p.ctx.Err(); ctxErr != nil {
+		return inputLine{}, ctxErr
+	}
+	if read.err == nil {
+		p.lineNo++
+		p.rawBytes += read.line.rawBytes
+	}
+	return read.line, read.err
+}
+
+func (p *processor) readInput() {
+	for {
+		select {
+		case request := <-p.readRequests:
+			line, err := nextLine(p.input, request.max)
+			select {
+			case request.result <- readResult{line, err}:
+			case <-p.readDone:
+				return
+			}
+		case <-p.readDone:
+			return
+		}
+	}
 }
 
 func (p *processor) parse(line inputLine) (record, bool) {
@@ -161,7 +207,7 @@ func (p *processor) runMap(first *record) int {
 			return 0
 		}
 		if err != nil {
-			p.diag.log(slog.LevelError, "input_read_failed", "input", "Could not read standard input", 0)
+			p.reportInputFailure(err)
 			return 2
 		}
 		rec, ok := p.parse(line)
@@ -184,6 +230,9 @@ func (p *processor) processMap(rec record) error {
 	if err != nil {
 		p.failures++
 		p.reportAgentFailure(err, rec.line, "agent")
+		if p.ctx.Err() != nil {
+			return err
+		}
 		return nil
 	}
 	payload, count, err := p.parseOutput(resp)
@@ -215,7 +264,7 @@ func (p *processor) runReduce(first *record) int {
 			break
 		}
 		if err != nil {
-			p.diag.log(slog.LevelError, "input_read_failed", "input", "Could not read standard input", 0)
+			p.reportInputFailure(err)
 			return 2
 		}
 		if p.rawBytes > p.cfg.MaxInputBytes {
@@ -261,7 +310,7 @@ func (p *processor) runAuto() int {
 			return 0
 		}
 		if err != nil {
-			p.diag.log(slog.LevelError, "input_read_failed", "input", "Could not read standard input", 0)
+			p.reportInputFailure(err)
 			return 2
 		}
 		rec, ok := p.parse(line)
@@ -346,6 +395,17 @@ func (p *processor) reportAgentFailure(err error, line int, stage string) {
 		code, message = "agent_cancelled", "Agent request was cancelled"
 	}
 	p.diag.log(slog.LevelError, code, stage, message, line)
+}
+
+func (p *processor) reportInputFailure(err error) {
+	code, message := "input_read_failed", "Could not read standard input"
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		code, message = "input_timeout", "Input read timed out"
+	case errors.Is(err, context.Canceled):
+		code, message = "input_cancelled", "Input read was cancelled"
+	}
+	p.diag.log(slog.LevelError, code, "input", message, 0)
 }
 
 func writeOutput(w io.Writer, payload []byte) error {

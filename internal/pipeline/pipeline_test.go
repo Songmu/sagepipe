@@ -335,6 +335,88 @@ func TestInputReadFailureIsFatal(t *testing.T) {
 	checkDiagnostic(t, diag.String(), "input_read_failed", 0)
 }
 
+func TestInputCancellationIsNotReadFailure(t *testing.T) {
+	for _, mode := range []string{"map", "reduce", "auto"} {
+		t.Run(mode, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			var out, diag strings.Builder
+			f := &fakeRunner{run: func(agent.Request) (agent.Response, error) {
+				t.Fatal("agent called after input cancellation")
+				return agent.Response{}, nil
+			}}
+			if code := Run(ctx, testConfig(mode), strings.NewReader("input\n"), &out, &diag, f); code != 2 {
+				t.Fatalf("exit code = %d, want 2; diagnostics: %s", code, diag.String())
+			}
+			if f.closed != 1 || out.Len() != 0 || strings.Contains(diag.String(), `"code":"input_read_failed"`) {
+				t.Errorf("closed=%d stdout=%q diagnostics=%s", f.closed, out.String(), diag.String())
+			}
+			checkDiagnostic(t, diag.String(), "input_cancelled", 0)
+		})
+	}
+}
+
+type stalledReader struct {
+	reading chan struct{}
+	release chan struct{}
+	err     error
+}
+
+func (r stalledReader) Read([]byte) (int, error) {
+	close(r.reading)
+	<-r.release
+	return 0, r.err
+}
+
+func TestInputCancellationDuringReadOverridesEOFAndReadError(t *testing.T) {
+	for _, readErr := range []error{io.EOF, io.ErrClosedPipe} {
+		t.Run(readErr.Error(), func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			reader := stalledReader{reading: make(chan struct{}), release: make(chan struct{}), err: readErr}
+			var out, diag strings.Builder
+			f := &fakeRunner{run: func(agent.Request) (agent.Response, error) {
+				t.Fatal("agent called after input cancellation")
+				return agent.Response{}, nil
+			}}
+			done := make(chan int, 1)
+			go func() { done <- Run(ctx, testConfig("map"), reader, &out, &diag, f) }()
+			select {
+			case <-reader.reading:
+			case <-time.After(2 * time.Second):
+				cancel()
+				close(reader.release)
+				t.Fatal("input read did not start")
+			}
+			cancel()
+			close(reader.release)
+			select {
+			case code := <-done:
+				if code != 2 || f.closed != 1 || strings.Count(diag.String(), `"code":"input_cancelled"`) != 1 ||
+					strings.Contains(diag.String(), `"code":"input_read_failed"`) {
+					t.Errorf("code=%d closed=%d diagnostics=%s", code, f.closed, diag.String())
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("input read did not stop")
+			}
+		})
+	}
+}
+
+func TestInputDeadlineIsNotReadFailure(t *testing.T) {
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+	var out, diag strings.Builder
+	f := &fakeRunner{run: func(agent.Request) (agent.Response, error) {
+		t.Fatal("agent called after input deadline")
+		return agent.Response{}, nil
+	}}
+	if code := Run(ctx, testConfig("reduce"), strings.NewReader("input\n"), &out, &diag, f); code != 2 {
+		t.Fatalf("exit code = %d, want 2; diagnostics: %s", code, diag.String())
+	}
+	checkDiagnostic(t, diag.String(), "input_timeout", 0)
+}
+
 func TestOutputWriteFailureIsFatal(t *testing.T) {
 	cfg := testConfig("map")
 	var diag strings.Builder
@@ -485,6 +567,44 @@ func TestAgentTimeoutIsReportedWithoutLeakingError(t *testing.T) {
 	}}
 	if code := Run(context.Background(), cfg, strings.NewReader("input\n"), &out, &diag, f); code != 1 {
 		t.Fatalf("exit code = %d, want 1; diagnostics: %s", code, diag.String())
+	}
+	checkDiagnostic(t, diag.String(), "agent_timeout", 1)
+}
+
+func TestGlobalCancellationStopsMapAfterActiveRequest(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var out, diag strings.Builder
+	f := &fakeRunner{run: func(agent.Request) (agent.Response, error) {
+		cancel()
+		return agent.Response{}, context.Canceled
+	}}
+	if code := Run(ctx, testConfig("map"), strings.NewReader("first\nsecond\n"), &out, &diag, f); code != 2 {
+		t.Fatalf("exit code = %d, want 2; diagnostics: %s", code, diag.String())
+	}
+	if len(f.calls) != 1 || f.closed != 1 || out.Len() != 0 ||
+		strings.Count(diag.String(), `"code":"agent_cancelled"`) != 1 ||
+		strings.Contains(diag.String(), `"code":"input_read_failed"`) ||
+		strings.Contains(diag.String(), `"code":"input_cancelled"`) {
+		t.Errorf("calls=%d closed=%d stdout=%q diagnostics=%s", len(f.calls), f.closed, out.String(), diag.String())
+	}
+}
+
+func TestMapContinuesAfterPerRequestTimeout(t *testing.T) {
+	var out, diag strings.Builder
+	calls := 0
+	f := &fakeRunner{run: func(agent.Request) (agent.Response, error) {
+		calls++
+		if calls == 1 {
+			return agent.Response{}, context.DeadlineExceeded
+		}
+		return agent.Response{Text: `{"items":["second"]}`}, nil
+	}}
+	if code := Run(context.Background(), testConfig("map"), strings.NewReader("first\nsecond\n"), &out, &diag, f); code != 1 {
+		t.Fatalf("exit code = %d, want 1; diagnostics: %s", code, diag.String())
+	}
+	if len(f.calls) != 2 || out.String() != "second\n" {
+		t.Errorf("calls=%d stdout=%q", len(f.calls), out.String())
 	}
 	checkDiagnostic(t, diag.String(), "agent_timeout", 1)
 }

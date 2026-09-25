@@ -7,8 +7,11 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -39,6 +42,21 @@ func TestACPHelperProcess(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	if marker := os.Getenv("SAGEPIPE_ACP_TEST_DESCENDANT_FILE"); marker != "" {
+		cmd := exec.Command(os.Args[0], "-test.run=^TestACPDescendantHelperProcess$")
+		cmd.Env = append(os.Environ(), "SAGEPIPE_ACP_TEST_DESCENDANT_MARKER="+marker)
+		if err := cmd.Start(); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(marker+".pid", []byte(strconv.Itoa(cmd.Process.Pid)), 0600); err != nil {
+			cmd.Process.Kill()
+			cmd.Wait()
+			t.Fatal(err)
+		}
+		if err := cmd.Process.Release(); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if os.Getenv("SAGEPIPE_ACP_TEST_MALFORMED") == "1" {
 		fmt.Fprintln(os.Stdout, "secret from malformed peer output")
 		return
@@ -46,6 +64,19 @@ func TestACPHelperProcess(t *testing.T) {
 	mock := &mockAgent{}
 	mock.conn = sdk.NewAgentSideConnection(mock, os.Stdout, os.Stdin)
 	<-mock.conn.Done()
+}
+
+func TestACPDescendantHelperProcess(t *testing.T) {
+	marker := os.Getenv("SAGEPIPE_ACP_TEST_DESCENDANT_MARKER")
+	if marker == "" {
+		return
+	}
+	for n := 0; ; n++ {
+		if err := os.WriteFile(marker, []byte(strconv.Itoa(n)), 0600); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }
 
 type mockAgent struct {
@@ -695,6 +726,88 @@ func TestCancelTerminatesAgent(t *testing.T) {
 			}
 			if _, err := r.Run(context.Background(), agent.Request{Prompt: "hello"}); err == nil {
 				t.Fatal("Run succeeded after explicit Close")
+			}
+		})
+	}
+}
+
+func TestCancelTerminatesACPDescendants(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows only terminates the direct agent process")
+	}
+	for _, method := range []string{"cancel", "close"} {
+		t.Run(method, func(t *testing.T) {
+			opts := mockOptions(t)
+			heartbeat := filepath.Join(opts.CWD, "descendant")
+			t.Setenv("SAGEPIPE_ACP_TEST_DESCENDANT_FILE", heartbeat)
+			r, err := New(opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer r.Close()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			result := make(chan error, 1)
+			go func() {
+				_, err := r.Run(ctx, agent.Request{Prompt: "block"})
+				result <- err
+			}()
+			awaitFile(t, filepath.Join(opts.CWD, "started"))
+			awaitFile(t, heartbeat)
+			pidFile := heartbeat + ".pid"
+			awaitFile(t, pidFile)
+			pidBytes, err := os.ReadFile(pidFile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			pid, err := strconv.Atoi(string(pidBytes))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				before, beforeErr := os.ReadFile(heartbeat)
+				time.Sleep(60 * time.Millisecond)
+				after, afterErr := os.ReadFile(heartbeat)
+				if beforeErr == nil && afterErr == nil && string(before) != string(after) {
+					if child, err := os.FindProcess(pid); err == nil {
+						child.Kill()
+						child.Release()
+					}
+				}
+			})
+			if method == "cancel" {
+				cancel()
+			} else {
+				closed := make(chan error, 1)
+				go func() { closed <- r.Close() }()
+				select {
+				case err := <-closed:
+					if err != nil {
+						t.Fatal(err)
+					}
+				case <-time.After(3 * time.Second):
+					t.Fatal("Close did not stop the agent")
+				}
+			}
+			select {
+			case err := <-result:
+				if method == "cancel" && !errors.Is(err, context.Canceled) || method == "close" && err == nil {
+					t.Fatalf("Run after %s = %v", method, err)
+				}
+			case <-time.After(3 * time.Second):
+				t.Fatal("Run did not stop after " + method)
+			}
+			before, err := os.ReadFile(heartbeat)
+			if err != nil {
+				t.Fatal(err)
+			}
+			time.Sleep(120 * time.Millisecond)
+			after, err := os.ReadFile(heartbeat)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(before) != string(after) {
+				t.Errorf("ACP descendant %d continued running after %s", pid, method)
 			}
 		})
 	}
