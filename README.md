@@ -11,15 +11,149 @@ sagepipe
 [license]: https://github.com/Songmu/sagepipe/blob/main/LICENSE
 [PkgGoDev]: https://pkg.go.dev/github.com/Songmu/sagepipe
 
-sagepipe short description
+sagepipe is a Unix-style filter that asks an AI agent to transform records
+from standard input and writes successful results to standard output. It can
+read and write either JSON Lines (JSONL) or line-oriented text.
 
-## Synopsis
+## Quick start
 
-```go
-// simple usage here
+```console
+printf 'hello\n' | sagepipe --agent claude --mode map --prompt 'Translate to Japanese'
 ```
 
-## Description
+For structured output, put YAML frontmatter and transformation instructions
+in a Markdown configuration file:
+
+````markdown
+---
+agent: copilot
+mode: map
+input_schema:
+  type: object
+  required: [name]
+  properties:
+    name:
+      type: string
+output_schema:
+  type: object
+  required: [category]
+  properties:
+    category:
+      type: string
+---
+
+Classify each input name. Do not invent names.
+````
+
+```console
+cat input.jsonl | sagepipe --config config.md > output.jsonl
+```
+
+`--config` is optional; `--prompt` overrides the entire Markdown body, including
+when passed an empty string. Without an explicit prompt, an empty prompt is
+used. CLI flags take precedence over configuration values.
+
+## Records and modes
+
+The presence of `input_schema` makes input JSONL; its absence makes input
+line-oriented text. `output_schema` independently selects JSONL or text
+output. JSONL records may contain any JSON value, not just objects. A JSONL
+blank or spaces-and-tabs-only line is skipped; an empty text line is a record.
+Both LF and CRLF input are accepted, and each successful output record ends
+in LF. Text output records cannot contain a line break.
+
+`map` processes each input line independently, producing zero or more output
+records per line. `reduce` processes the valid input records together, also
+producing zero or more output records. In the default `auto` mode, a nonempty
+prompt and at least one valid input record cause one additional agent call to
+choose `map` or `reduce`; ambiguous transformations use `map`. Specify a mode
+to avoid this extra call and make the processing unit predictable. The initial
+release processes requests sequentially; it has no `--concurrency` flag. A
+`concurrency` frontmatter value is ignored like other unknown metadata.
+
+The agent must return a single JSON object of the form `{"items":[...]}`.
+sagepipe checks the entire answer and validates every item before writing
+any result from that call. Invalid input rows and failed `map` calls are
+reported on standard error without inserting error records into standard
+output. For `reduce`, invalid input rows are excluded but still count as
+failures; a failed aggregate call produces no aggregate output.
+
+Exit status is `0` on success, `1` after completing input with rejected
+records, and `2` for failures that prevent completing the run. Standard
+error contains JSONL diagnostics with `level`, `code`, `stage`, and `message`;
+input-specific diagnostics also include the one-based physical `line`.
+
+## Agents and permissions
+
+`copilot` defaults to ACP; `claude` and `codex` use their respective
+non-interactive CLIs. Install and authenticate the selected agent
+separately. Copilot can instead use its CLI with `--protocol cli`. There is
+no automatic fallback between agents or protocols. A custom ACP agent can
+be configured with a command and arguments:
+
+```yaml
+agent:
+  protocol: acp
+  command: my-agent-acp
+  args: [--stdio]
+  cwd: ./agent-project
+```
+
+`allowed-tools` is a top-level, space-separated YAML frontmatter value
+compatible in spelling with Agent Skills. It is passed through the
+selected agent's native tool mechanism, not enforced as a portable sandbox:
+
+```yaml
+agent: claude
+allowed-tools: Read Grep Glob
+```
+
+An explicit `--allowed-tools 'Read Grep Glob'` overrides the configured value.
+Changing the agent with `--agent` does not clear the top-level value, even
+if the tool names are not suitable for the new agent. An agent or protocol
+without a way to specify the requested tools fails instead of silently
+ignoring the option. Without this setting, the agent's own defaults apply;
+read-only behavior, file isolation, and network isolation are not guaranteed.
+Agent processes inherit the invoking process's environment.
+
+## Schemas, paths, and limits
+
+Schema values in the configuration may be inline JSON Schema objects, boolean
+schemas, or file paths; string values are always paths. A CLI schema flag
+accepts a JSON object or `true`/`false` directly, or a path otherwise.
+Local file references in schemas are supported; external HTTP(S) references
+are not fetched. Schema validation supports Draft-04, Draft-06, Draft-07,
+Draft 2019-09, and Draft 2020-12, subject to the selected draft's rules.
+The selected agent's generation-time schema support is only a hint; every
+result is also validated locally.
+
+Configuration-relative paths resolve from the configuration file's directory.
+`-C <dir>` changes the effective working directory and the base for a
+relative `--config` path. Other relative CLI paths resolve from the effective
+working directory; `--agent-cwd` changes only the agent's working directory.
+
+| Flag | Default | Effect |
+| --- | --- | --- |
+| `--agent`, `--protocol`, `--model` | `copilot`, agent's default protocol/model | Select an agent connection |
+| `--mode` | `auto` | Select `map`, `reduce`, or `auto` |
+| `--input-schema`, `--output-schema` | None | Validate records and select JSONL on that side |
+| `--max-line-bytes` | 1,048,576 | Maximum raw input line in `map` |
+| `--max-input-bytes` | 65,536 | Maximum total raw input in `reduce` |
+| `--max-response-bytes` | 8,388,608 | Maximum final answer per agent call |
+| `--timeout` | None | Deadline for each agent call, including auto-mode selection |
+| `-C`, `--agent-cwd` | Invoking directory, then effective `cwd` | Set filter and agent directories |
+
+Limits can also be set in frontmatter as `max_line_bytes`,
+`max_input_bytes`, `max_response_bytes`, and `timeout`. An oversized
+`reduce` input fails instead of being truncated or split. There are no
+automatic agent retries; tools may have side effects.
+Ctrl-C (and SIGTERM on Unix) cancels processing and attempts to close standard
+input to release a pending read. The run reports a JSONL cancellation diagnostic
+and exits with status 2 after agent cleanup. On Unix, CLI and ACP agent
+subprocess groups are terminated on cancellation. On Windows, CLI waiting is
+bounded even when descendants keep its output pipes open, but only the direct
+CLI or ACP agent process is guaranteed to be terminated; descendants may
+continue running.
 
 ## Installation
 

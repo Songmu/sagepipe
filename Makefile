@@ -13,7 +13,7 @@ devel-deps:
 
 .PHONY: test
 test:
-	go test
+	go test ./...
 
 .PHONY: build
 build:

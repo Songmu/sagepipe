@@ -3,21 +3,33 @@ package main
 import (
 	"context"
 	"flag"
-	"log"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/Songmu/sagepipe"
 )
 
 func main() {
-	log.SetFlags(0)
-	err := sagepipe.Run(context.Background(), os.Args[1:], os.Stdout, os.Stderr)
+	os.Exit(run())
+}
+
+func run() int {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	stopRead := context.AfterFunc(ctx, func() {
+		stop()
+		os.Stdin.Close()
+	})
+	defer stopRead()
+
+	err := sagepipe.Run(ctx, os.Args[1:], os.Stdout, os.Stderr)
 	if err != nil && err != flag.ErrHelp {
-		log.Println(err)
-		exitCode := 1
+		exitCode := 2
 		if ecoder, ok := err.(interface{ ExitCode() int }); ok {
 			exitCode = ecoder.ExitCode()
 		}
-		os.Exit(exitCode)
+		return exitCode
 	}
+	return 0
 }
