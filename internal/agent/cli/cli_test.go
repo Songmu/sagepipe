@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -68,6 +70,30 @@ func helperProcess() {
 	switch os.Getenv("SAGEPIPE_MODE") {
 	case "sleep":
 		time.Sleep(30 * time.Second)
+	case "descendant":
+		child := exec.Command(os.Args[0])
+		child.Env = append(os.Environ(), "SAGEPIPE_MODE=descendant-sleep", "SAGEPIPE_CAPTURE=")
+		child.Stdout, child.Stderr = os.Stdout, os.Stderr
+		if err := child.Start(); err != nil {
+			os.Exit(22)
+		}
+		if err := os.WriteFile(os.Getenv("SAGEPIPE_DESCENDANT_PID"), []byte(strconv.Itoa(child.Process.Pid)), 0600); err != nil {
+			child.Process.Kill()
+			os.Exit(23)
+		}
+		child.Process.Release()
+		switch os.Getenv("SAGEPIPE_CHILD_OUTPUT") {
+		case "stdout-limit":
+			fmt.Print(strings.Repeat("x", 1024))
+		case "stderr-limit":
+			fmt.Println("ready")
+			_, _ = fmt.Fprint(os.Stderr, strings.Repeat("x", 70<<10))
+		default:
+			fmt.Println("ready")
+			_, _ = fmt.Fprint(os.Stderr, os.Getenv("SAGEPIPE_STDERR"))
+		}
+	case "descendant-sleep":
+		time.Sleep(30 * time.Second)
 	case "stderr":
 		_, _ = fmt.Fprint(os.Stderr, strings.Repeat("x", 70<<10))
 	case "big":
@@ -97,6 +123,8 @@ func runnerOptions(t *testing.T) (cli.Options, string) {
 	t.Setenv("SAGEPIPE_HELPER", "1")
 	t.Setenv("SAGEPIPE_MODE", "")
 	t.Setenv("SAGEPIPE_BYTES", "")
+	t.Setenv("SAGEPIPE_CHILD_OUTPUT", "")
+	t.Setenv("SAGEPIPE_DESCENDANT_PID", "")
 	t.Setenv("SAGEPIPE_STATUS", "")
 	t.Setenv("SAGEPIPE_STDERR", "")
 	t.Setenv("SAGEPIPE_STDOUT", "")
@@ -481,6 +509,123 @@ func TestExactEventStreamBoundary(t *testing.T) {
 		if n == 513 && (err == nil || !strings.Contains(err.Error(), "stdout limit")) {
 			t.Fatalf("over cap %d: got %d bytes, %v", n, got, err)
 		}
+	}
+}
+
+func TestExecuteInheritedPipes(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		outputMode string
+		maxBytes   int64
+		wantError  string
+	}{
+		{"cancel", "", 0, "canceled"},
+		{"parent exit", "", 0, "output pipes remained open"},
+		{"parent exit status", "", 0, "status 7"},
+		{"stdout limit", "stdout-limit", 512, "stdout limit"},
+		{"stderr limit", "stderr-limit", 0, "stderr limit"},
+		{"callback error", "", 0, "callback failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			opts, _ := runnerOptions(t)
+			opts.MaxOutputBytes = tc.maxBytes
+			prepared, err := opts.Prepare("helper")
+			if err != nil {
+				t.Fatal(err)
+			}
+			pidPath := filepath.Join(t.TempDir(), "descendant.pid")
+			t.Setenv("SAGEPIPE_DESCENDANT_PID", pidPath)
+			t.Setenv("SAGEPIPE_MODE", "descendant")
+			t.Setenv("SAGEPIPE_CHILD_OUTPUT", tc.outputMode)
+			t.Setenv("SAGEPIPE_STDERR", "secret stderr")
+			if tc.name == "parent exit status" {
+				t.Setenv("SAGEPIPE_STATUS", "7")
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+			defer cancel()
+			var cancelTimer *time.Timer
+			defer func() {
+				if cancelTimer != nil {
+					cancelTimer.Stop()
+				}
+			}()
+			started := time.Now()
+			err = cli.Execute(ctx, "test", prepared, nil, nil, func(line []byte) error {
+				if tc.name == "cancel" {
+					cancelTimer = time.AfterFunc(100*time.Millisecond, cancel)
+				}
+				if tc.name == "callback error" {
+					return errors.New("callback failed")
+				}
+				return nil
+			})
+			if time.Since(started) > 3*time.Second {
+				t.Errorf("inherited pipes delayed %s: %v", tc.name, err)
+			}
+			if tc.name == "cancel" {
+				if !errors.Is(err, context.Canceled) {
+					t.Errorf("cancellation error: %v", err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), tc.wantError) || strings.Contains(err.Error(), "secret") {
+				t.Errorf("unexpected %s error: %v", tc.name, err)
+			}
+			pidBytes, err := os.ReadFile(pidPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			pid, err := strconv.Atoi(string(pidBytes))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if child, err := os.FindProcess(pid); err == nil {
+					child.Kill()
+					child.Release()
+				}
+			})
+			if runtime.GOOS == "windows" {
+				return
+			}
+			deadline := time.Now().Add(2 * time.Second)
+			for descendantRunning(pid) && time.Now().Before(deadline) {
+				time.Sleep(10 * time.Millisecond)
+			}
+			if descendantRunning(pid) {
+				t.Errorf("descendant %d remains running after %s", pid, tc.name)
+			}
+		})
+	}
+}
+
+func descendantRunning(pid int) bool {
+	if runtime.GOOS == "linux" {
+		stat, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+		if errors.Is(err, os.ErrNotExist) {
+			return false
+		}
+		if i := strings.LastIndexByte(string(stat), ')'); err == nil && i >= 0 && i+2 < len(stat) && stat[i+2] == 'Z' {
+			return false
+		}
+	}
+	child, err := os.FindProcess(pid)
+	return err == nil && child.Signal(syscall.Signal(0)) == nil
+}
+
+func TestExecuteSuccessfulPipes(t *testing.T) {
+	opts, _ := runnerOptions(t)
+	prepared, err := opts.Prepare("helper")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SAGEPIPE_STDOUT", "first\nsecond\n")
+	t.Setenv("SAGEPIPE_STDERR", "secret stderr")
+	var lines []string
+	err = cli.Execute(context.Background(), "test", prepared, nil, nil, func(line []byte) error {
+		lines = append(lines, string(line))
+		return nil
+	})
+	if err != nil || !slices.Equal(lines, []string{"first", "second"}) {
+		t.Fatalf("ordinary subprocess: %q, %v", lines, err)
 	}
 }
 

@@ -52,7 +52,7 @@ func (r *Runner) Run(ctx context.Context, req agent.Request) (response agent.Res
 				}
 			}()
 			if _, err = file.Write(req.NativeSchema); err != nil {
-				_ = file.Close()
+				file.Close()
 				return response, errors.New("codex CLI: cannot write temporary output schema")
 			}
 			if err = file.Close(); err != nil {

@@ -147,6 +147,9 @@ Limits can also be set in frontmatter as `max_line_bytes`,
 `max_input_bytes`, `max_response_bytes`, and `timeout`. An oversized
 `reduce` input fails instead of being truncated or split. There are no
 automatic agent retries; tools may have side effects.
+On Windows, cancellation bounds the wait for a CLI agent even when descendants
+keep its output pipes open, but only the direct agent process is guaranteed to
+be terminated; descendants may continue running.
 
 ## Installation
 

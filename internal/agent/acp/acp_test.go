@@ -87,6 +87,13 @@ func (m *mockAgent) CloseSession(_ context.Context, p sdk.CloseSessionRequest) (
 	if os.Getenv("SAGEPIPE_ACP_TEST_NO_CLOSE") == "1" {
 		return sdk.CloseSessionResponse{}, errors.New("session/close was not advertised")
 	}
+	if os.Getenv("SAGEPIPE_ACP_TEST_HANG_CLOSE") == "1" {
+		if err := os.WriteFile("closing", []byte("yes"), 0600); err != nil {
+			return sdk.CloseSessionResponse{}, err
+		}
+		<-m.conn.Done()
+		return sdk.CloseSessionResponse{}, errors.New("connection closed during session/close")
+	}
 	if m.closeErr {
 		return sdk.CloseSessionResponse{}, errors.New("sensitive close error")
 	}
@@ -123,12 +130,37 @@ func (m *mockAgent) Prompt(ctx context.Context, p sdk.PromptRequest) (sdk.Prompt
 		return sdk.PromptResponse{}, errors.New("missing prompt text")
 	}
 	prompt := p.Prompt[0].Text.Text
+	if prompt == "disconnect" {
+		os.Exit(0)
+	}
 	if prompt == "block" {
 		if err := os.WriteFile("started", []byte("yes"), 0600); err != nil {
 			return sdk.PromptResponse{}, err
 		}
 		<-ctx.Done()
 		return sdk.PromptResponse{StopReason: sdk.StopReasonCancelled}, nil
+	}
+	if prompt == "protocol" {
+		if err := os.WriteFile("started", []byte("yes"), 0600); err != nil {
+			return sdk.PromptResponse{}, err
+		}
+		for {
+			if _, err := os.Stat("continue"); err == nil {
+				break
+			} else if !os.IsNotExist(err) {
+				return sdk.PromptResponse{}, err
+			}
+			select {
+			case <-ctx.Done():
+				return sdk.PromptResponse{}, ctx.Err()
+			case <-time.After(10 * time.Millisecond):
+			}
+		}
+		m.conn.SessionUpdate(ctx, sdk.SessionNotification{
+			SessionId: p.SessionId, Update: sdk.UpdateAgentThoughtText(strings.Repeat("x", 1024)),
+		})
+		<-ctx.Done()
+		return sdk.PromptResponse{}, ctx.Err()
 	}
 	if prompt == "secret" {
 		return sdk.PromptResponse{}, errors.New("sensitive server error secret")
@@ -152,8 +184,8 @@ func (m *mockAgent) Prompt(ctx context.Context, p sdk.PromptRequest) (sdk.Prompt
 		return sdk.PromptResponse{}, err
 	}
 	if prompt == "large" {
-		_ = send(p.SessionId, sdk.UpdateAgentMessageText("abc"))
-		_ = send(p.SessionId, sdk.UpdateAgentMessageText("def"))
+		send(p.SessionId, sdk.UpdateAgentMessageText("abc"))
+		send(p.SessionId, sdk.UpdateAgentMessageText("def"))
 		return sdk.PromptResponse{StopReason: sdk.StopReasonEndTurn}, nil
 	}
 	if prompt == "notice" {
@@ -273,7 +305,9 @@ func TestCancelledFirstRunDoesNotLaunchAgent(t *testing.T) {
 func TestCancelDuringInitializationReapsAgent(t *testing.T) {
 	opts := mockOptions(t)
 	marker := filepath.Join(opts.CWD, "launched")
+	startLog := filepath.Join(opts.CWD, "starts")
 	t.Setenv("SAGEPIPE_ACP_TEST_STARTED_FILE", marker)
+	t.Setenv("SAGEPIPE_ACP_TEST_START_LOG", startLog)
 	t.Setenv("SAGEPIPE_ACP_TEST_HANG_INIT", "1")
 	r, err := New(opts)
 	if err != nil {
@@ -287,6 +321,13 @@ func TestCancelDuringInitializationReapsAgent(t *testing.T) {
 		result <- err
 	}()
 	awaitFile(t, marker)
+	state := r.(*runner)
+	state.procMu.Lock()
+	cmd := state.cmd
+	state.procMu.Unlock()
+	if cmd == nil {
+		t.Fatal("agent did not start")
+	}
 	cancel()
 	select {
 	case err := <-result:
@@ -296,8 +337,13 @@ func TestCancelDuringInitializationReapsAgent(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("initialization did not stop after cancellation")
 	}
-	if r.(*runner).cmd.ProcessState == nil {
+	if cmd.ProcessState == nil || state.cmd != nil || state.conn != nil {
 		t.Fatal("agent was not reaped")
+	}
+	t.Setenv("SAGEPIPE_ACP_TEST_HANG_INIT", "0")
+	res, err := r.Run(context.Background(), agent.Request{Prompt: "hello"})
+	if err != nil || !strings.Contains(res.Text, `"session-1"`) || processStarts(t, startLog) != 2 {
+		t.Fatalf("Run after cancelled initialization = %+v, %v", res, err)
 	}
 }
 
@@ -447,6 +493,85 @@ func TestRunLimitsAndSanitizedErrors(t *testing.T) {
 	}
 }
 
+func TestRunRecyclesAfterRequestFailure(t *testing.T) {
+	for _, tt := range []struct {
+		prompt, want string
+		limit        int64
+	}{
+		{"large", "response byte limit exceeded", 4},
+		{"closefail", "close ACP session: failed", 100},
+		{"disconnect", "ACP connection was lost", 100},
+	} {
+		t.Run(tt.prompt, func(t *testing.T) {
+			opts := mockOptions(t)
+			startLog := filepath.Join(opts.CWD, "starts")
+			t.Setenv("SAGEPIPE_ACP_TEST_START_LOG", startLog)
+			r, err := New(opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer r.Close()
+
+			_, err = r.Run(context.Background(), agent.Request{Prompt: tt.prompt, MaxResponseBytes: tt.limit})
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("first Run error = %v, want %q", err, tt.want)
+			}
+			state := r.(*runner)
+			if state.cmd != nil || state.conn != nil || !state.waited {
+				t.Fatal("failed request did not reap and recycle its agent")
+			}
+			res, err := r.Run(context.Background(), agent.Request{Prompt: "hello"})
+			if err != nil || !strings.Contains(res.Text, `"session-1"`) || processStarts(t, startLog) != 2 {
+				t.Fatalf("Run after %s = %+v, %v", tt.prompt, res, err)
+			}
+		})
+	}
+}
+
+func TestRunRecyclesAfterProtocolLimit(t *testing.T) {
+	opts := mockOptions(t)
+	startLog := filepath.Join(opts.CWD, "starts")
+	t.Setenv("SAGEPIPE_ACP_TEST_START_LOG", startLog)
+	r, err := New(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+
+	result := make(chan error, 1)
+	go func() {
+		_, err := r.Run(context.Background(), agent.Request{Prompt: "protocol"})
+		result <- err
+	}()
+	awaitFile(t, filepath.Join(opts.CWD, "started"))
+	state := r.(*runner)
+	state.procMu.Lock()
+	budget := state.budget
+	state.procMu.Unlock()
+	if budget == nil {
+		t.Fatal("agent did not start")
+	}
+	budget.remaining.Store(64)
+	if err := os.WriteFile(filepath.Join(opts.CWD, "continue"), []byte("yes"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-result:
+		if err == nil || !strings.Contains(err.Error(), "protocol byte limit exceeded") {
+			t.Fatalf("Run error = %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("protocol limit did not interrupt the agent")
+	}
+	if state.cmd != nil || state.conn != nil || !state.waited {
+		t.Fatal("protocol limit did not reap and recycle the agent")
+	}
+	res, err := r.Run(context.Background(), agent.Request{Prompt: "hello"})
+	if err != nil || !strings.Contains(res.Text, `"session-1"`) || processStarts(t, startLog) != 2 {
+		t.Fatalf("Run after protocol limit = %+v, %v", res, err)
+	}
+}
+
 func TestModelAndToolsMustBeSupported(t *testing.T) {
 	opts := mockOptions(t)
 	opts.AllowedTools = "Read"
@@ -481,6 +606,14 @@ func TestPeerOutputIsNotLogged(t *testing.T) {
 	if r == nil || err == nil || strings.Contains(err.Error(), "secret") || strings.Contains(logs.String(), "secret") {
 		t.Fatalf("malformed peer output leaked: runner = %v, error = %v, logs = %q", r, err, logs.String())
 	}
+	if state := r.(*runner); state.cmd != nil || state.conn != nil || !state.waited {
+		t.Fatal("initialization failure did not reap and recycle the agent")
+	}
+	t.Setenv("SAGEPIPE_ACP_TEST_MALFORMED", "0")
+	res, err := r.Run(context.Background(), agent.Request{Prompt: "hello"})
+	if err != nil || !strings.Contains(res.Text, `"session-1"`) {
+		t.Fatalf("Run after initialization failure = %+v, %v", res, err)
+	}
 	if err := r.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -513,6 +646,8 @@ func TestCancelTerminatesAgent(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			opts := mockOptions(t)
+			startLog := filepath.Join(opts.CWD, "starts")
+			t.Setenv("SAGEPIPE_ACP_TEST_START_LOG", startLog)
 			r, err := New(opts)
 			if err != nil {
 				t.Fatal(err)
@@ -529,6 +664,13 @@ func TestCancelTerminatesAgent(t *testing.T) {
 				result <- err
 			}()
 			awaitFile(t, filepath.Join(opts.CWD, "started"))
+			state := r.(*runner)
+			state.procMu.Lock()
+			cmd := state.cmd
+			state.procMu.Unlock()
+			if cmd == nil {
+				t.Fatal("agent did not start")
+			}
 			if !timeout {
 				cancel()
 			}
@@ -541,8 +683,18 @@ func TestCancelTerminatesAgent(t *testing.T) {
 				t.Fatal("Run did not return after cancellation")
 			}
 			awaitFile(t, filepath.Join(opts.CWD, "cancelled"))
-			if err := r.Close(); err != nil || r.(*runner).cmd.ProcessState == nil {
-				t.Fatalf("agent not reaped after cancellation: %v", err)
+			if cmd.ProcessState == nil || state.cmd != nil || state.conn != nil {
+				t.Fatal("agent not reaped and recycled after cancellation")
+			}
+			res, err := r.Run(context.Background(), agent.Request{Prompt: "hello"})
+			if err != nil || !strings.Contains(res.Text, `"session-1"`) || processStarts(t, startLog) != 2 {
+				t.Fatalf("Run after cancellation = %+v, %v", res, err)
+			}
+			if err := r.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := r.Run(context.Background(), agent.Request{Prompt: "hello"}); err == nil {
+				t.Fatal("Run succeeded after explicit Close")
 			}
 		})
 	}
@@ -570,6 +722,77 @@ func TestCloseInterruptsPrompt(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("Run did not return after Close")
+	}
+}
+
+func TestCloseDuringCancellation(t *testing.T) {
+	opts := mockOptions(t)
+	r, err := New(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	result := make(chan error, 1)
+	go func() {
+		_, err := r.Run(ctx, agent.Request{Prompt: "block"})
+		result <- err
+	}()
+	awaitFile(t, filepath.Join(opts.CWD, "started"))
+	state := r.(*runner)
+	state.procMu.Lock()
+	cmd := state.cmd
+	state.procMu.Unlock()
+	if cmd == nil {
+		t.Fatal("agent did not start")
+	}
+	closed := make(chan error, 1)
+	go func() { closed <- r.Close() }()
+	cancel()
+	select {
+	case err := <-result:
+		if err == nil {
+			t.Fatal("Run succeeded during Close and cancellation")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run hung during Close and cancellation")
+	}
+	select {
+	case err := <-closed:
+		if err != nil || cmd.ProcessState == nil {
+			t.Fatalf("Close did not reap the agent: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Close hung during cancellation")
+	}
+	if _, err := r.Run(context.Background(), agent.Request{Prompt: "hello"}); err == nil {
+		t.Fatal("Run succeeded after Close")
+	}
+}
+
+func TestCloseInterruptsSessionClose(t *testing.T) {
+	opts := mockOptions(t)
+	t.Setenv("SAGEPIPE_ACP_TEST_HANG_CLOSE", "1")
+	r, err := New(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := make(chan error, 1)
+	go func() {
+		_, err := r.Run(context.Background(), agent.Request{Prompt: "hello"})
+		result <- err
+	}()
+	awaitFile(t, filepath.Join(opts.CWD, "closing"))
+	if err := r.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-result:
+		if err == nil {
+			t.Fatal("Run succeeded after Close interrupted session/close")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run hung during session/close")
 	}
 }
 

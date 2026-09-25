@@ -121,12 +121,12 @@ func (r *runner) start(ctx context.Context) error {
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		_ = stdin.Close()
+		stdin.Close()
 		return errors.New("open ACP output pipe: failed")
 	}
 	if err := cmd.Start(); err != nil {
-		_ = stdin.Close()
-		_ = stdout.Close()
+		stdin.Close()
+		stdout.Close()
 		return errors.New("start ACP agent: failed")
 	}
 
@@ -156,14 +156,12 @@ func (r *runner) initialize(ctx context.Context) error {
 	close(finished)
 	<-watchDone
 	if err != nil || initCtx.Err() != nil {
-		_ = r.Close()
 		if initCtx.Err() != nil {
 			return initCtx.Err()
 		}
 		return errors.New("initialize ACP agent: failed")
 	}
 	if init.ProtocolVersion != sdk.ProtocolVersionNumber {
-		_ = r.Close()
 		return errors.New("ACP agent selected an unsupported protocol version")
 	}
 	r.closeSessions = init.AgentCapabilities.SessionCapabilities.Close != nil
@@ -194,11 +192,36 @@ func (r *runner) Run(ctx context.Context, request agent.Request) (response agent
 		return agent.Response{}, errors.New("ACP connection is closed")
 	default:
 	}
+	recycle := false
+	// Keep the connection stable until session cleanup and the watcher finish.
+	defer func() {
+		if r.conn != nil {
+			select {
+			case <-r.conn.Done():
+				recycle = true
+			default:
+			}
+			if r.budget.exceeded.Load() {
+				recycle = true
+			}
+		}
+		if ctx.Err() != nil || recycle {
+			r.stopProcess(true)
+		}
+	}()
+	if r.conn != nil {
+		select {
+		case <-r.conn.Done():
+			r.stopProcess(true)
+		default:
+		}
+	}
 	if r.conn == nil {
 		if err := r.start(ctx); err != nil {
 			return agent.Response{}, err
 		}
 		if err := r.initialize(ctx); err != nil {
+			recycle = true
 			return agent.Response{}, err
 		}
 	}
@@ -206,14 +229,14 @@ func (r *runner) Run(ctx context.Context, request agent.Request) (response agent
 	case <-r.closed:
 		return agent.Response{}, errors.New("ACP connection is closed")
 	case <-r.conn.Done():
-		_ = r.Close()
+		recycle = true
 		return agent.Response{}, errors.New("ACP connection was lost")
 	default:
 	}
 	if !r.closeSessions {
 		// Without session/close, release the entire process after this turn.
 		// The next Run starts a fresh process rather than accumulating sessions.
-		defer r.stopProcess(true)
+		recycle = true
 	}
 	protocolLimit := int64(minProtocolBytes)
 	if limit > protocolLimit/4 {
@@ -237,6 +260,9 @@ func (r *runner) Run(ctx context.Context, request agent.Request) (response agent
 	defer func() {
 		close(finished)
 		<-watchDone
+		if runCtx.Err() != nil {
+			recycle = true
+		}
 		cancel(nil)
 		if ctx.Err() != nil && runErr == nil {
 			response = agent.Response{}
@@ -248,9 +274,11 @@ func (r *runner) Run(ctx context.Context, request agent.Request) (response agent
 		Cwd: r.cwd, McpServers: []sdk.McpServer{},
 	})
 	if err != nil {
+		recycle = true
 		return agent.Response{}, r.rpcError(ctx, runCtx, "create ACP session")
 	}
 	if session.SessionId == "" {
+		recycle = true
 		return agent.Response{}, errors.New("ACP agent returned an empty session ID")
 	}
 	sessionReady <- session.SessionId
@@ -260,11 +288,11 @@ func (r *runner) Run(ctx context.Context, request agent.Request) (response agent
 			// safe way to wait for a session/close response on it.
 			if runCtx.Err() == nil {
 				if _, closeErr := r.conn.CloseSession(runCtx, sdk.CloseSessionRequest{SessionId: session.SessionId}); closeErr != nil {
+					recycle = true
 					if runErr == nil {
 						response = agent.Response{}
 						runErr = r.rpcError(ctx, runCtx, "close ACP session")
 					}
-					_ = r.Close()
 				}
 			}
 		}()
@@ -361,14 +389,12 @@ func (r *runner) rpcError(ctx, runCtx context.Context, operation string) error {
 		return err
 	}
 	if r.budget.exceeded.Load() {
-		_ = r.Close()
 		return errors.New("ACP protocol byte limit exceeded")
 	}
 	select {
 	case <-r.closed:
 		return errors.New("ACP connection is closed")
 	case <-r.conn.Done():
-		_ = r.Close()
 		return errors.New("ACP connection was lost")
 	default:
 	}
@@ -389,8 +415,9 @@ func (r *runner) watch(ctx context.Context, finished <-chan struct{}, sessionRea
 		select {
 		case id := <-sessionReady:
 			sent := make(chan struct{})
+			conn := r.conn
 			go func() {
-				_ = r.conn.Cancel(context.Background(), sdk.CancelNotification{SessionId: id})
+				conn.Cancel(context.Background(), sdk.CancelNotification{SessionId: id})
 				close(sent)
 			}()
 			select {
@@ -403,7 +430,7 @@ func (r *runner) watch(ctx context.Context, finished <-chan struct{}, sessionRea
 		default:
 		}
 	}
-	_ = r.Close()
+	r.stopProcess(false)
 }
 
 // Close terminates and reaps the agent even if it is stuck on an ACP request.
@@ -419,10 +446,10 @@ func (r *runner) stopProcess(recycle bool) {
 	r.procMu.Lock()
 	defer r.procMu.Unlock()
 	if r.cmd != nil && !r.waited {
-		_ = r.stdin.Close()
-		_ = r.stdout.Close()
-		_ = r.cmd.Process.Kill()
-		_ = r.cmd.Wait()
+		r.stdin.Close()
+		r.stdout.Close()
+		r.cmd.Process.Kill()
+		r.cmd.Wait()
 		r.waited = true
 	}
 	if recycle {

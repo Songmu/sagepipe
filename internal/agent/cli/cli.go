@@ -13,12 +13,14 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
 const (
-	defaultOutputBytes = 16 << 20
-	maxStderrBytes     = 64 << 10
+	defaultOutputBytes  = 16 << 20
+	maxStderrBytes      = 64 << 10
+	subprocessWaitDelay = time.Second
 )
 
 var errStderrLimit = errors.New("stderr limit exceeded")
@@ -79,14 +81,13 @@ func Execute(ctx context.Context, product string, opts Options, args []string, s
 	cmd := exec.CommandContext(ctx, opts.Program, args...)
 	cmd.Dir = opts.Dir
 	cmd.Stdin = stdin
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return fmt.Errorf("%s CLI: cannot open stdout pipe", product)
-	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return fmt.Errorf("%s CLI: cannot open stderr pipe", product)
-	}
+	configureSubprocess(cmd)
+	cmd.Cancel = func() error { return terminateSubprocess(cmd) }
+	cmd.WaitDelay = subprocessWaitDelay
+	stdout, stdoutWriter := io.Pipe()
+	stderr, stderrWriter := io.Pipe()
+	cmd.Stdout = stdoutWriter
+	cmd.Stderr = stderrWriter
 	if err := cmd.Start(); err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -94,13 +95,28 @@ func Execute(ctx context.Context, product string, opts Options, args []string, s
 		return fmt.Errorf("%s CLI: cannot start subprocess", product)
 	}
 
+	waitDone := make(chan error, 1)
+	go func() {
+		waitErr := cmd.Wait()
+		if waitErr != nil {
+			terminateSubprocess(cmd)
+		}
+		stdoutWriter.Close()
+		stderrWriter.Close()
+		waitDone <- waitErr
+	}()
+
 	stderrDone := make(chan error, 1)
 	go func() {
+		defer stderr.Close()
 		n, err := io.Copy(io.Discard, io.LimitReader(stderr, maxStderrBytes+1))
 		if n > maxStderrBytes {
-			_ = cmd.Process.Kill()
+			terminateSubprocess(cmd)
 			stderrDone <- errStderrLimit
 		} else {
+			if err != nil {
+				terminateSubprocess(cmd)
+			}
 			stderrDone <- err
 		}
 	}()
@@ -127,10 +143,12 @@ func Execute(ctx context.Context, product string, opts Options, args []string, s
 		}
 	}
 	if readErr != nil {
-		_ = cmd.Process.Kill()
+		stdout.Close()
+		terminateSubprocess(cmd)
 	}
 	stderrErr := <-stderrDone
-	waitErr := cmd.Wait()
+	waitErr := <-waitDone
+	stdout.Close()
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -142,6 +160,9 @@ func Execute(ctx context.Context, product string, opts Options, args []string, s
 	}
 	if stderrErr != nil {
 		return fmt.Errorf("%s CLI: unreadable stderr", product)
+	}
+	if errors.Is(waitErr, exec.ErrWaitDelay) {
+		return fmt.Errorf("%s CLI: subprocess output pipes remained open", product)
 	}
 	if waitErr != nil {
 		var exit *exec.ExitError
