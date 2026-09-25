@@ -411,7 +411,7 @@ func parseAgent(raw yaml.RawMessage, dir string) (AgentConfig, error) {
 		if a.Command == "" {
 			return a, errors.New("custom agents require command")
 		}
-		if strings.ContainsRune(a.Command, filepath.Separator) {
+		if strings.ContainsRune(a.Command, '/') || strings.ContainsRune(a.Command, filepath.Separator) {
 			a.Command = resolve(dir, a.Command)
 		}
 	}
@@ -595,6 +595,9 @@ func resolve(dir, path string) string {
 
 func directoryURI(dir string) string {
 	path := filepath.ToSlash(dir)
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
 	if !strings.HasSuffix(path, "/") {
 		path += "/"
 	}

@@ -31,7 +31,11 @@ func Load(path string) (*Document, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read schema %q: %w", abs, err)
 	}
-	uri := (&url.URL{Scheme: "file", Path: filepath.ToSlash(abs)}).String()
+	uriPath := filepath.ToSlash(abs)
+	if !strings.HasPrefix(uriPath, "/") {
+		uriPath = "/" + uriPath
+	}
+	uri := (&url.URL{Scheme: "file", Path: uriPath}).String()
 	return Inline(raw, uri)
 }
 

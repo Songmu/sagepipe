@@ -179,7 +179,11 @@ Original prompt.
 	t.Run("file URI escapes directory names", func(t *testing.T) {
 		base := directoryURI(configDir)
 		u, err := url.Parse(base)
-		if err != nil || u.Scheme != "file" || u.Path != configDir+"/" {
+		wantPath := filepath.ToSlash(configDir)
+		if !strings.HasPrefix(wantPath, "/") {
+			wantPath = "/" + wantPath
+		}
+		if err != nil || u.Scheme != "file" || u.Path != wantPath+"/" {
 			t.Fatalf("invalid base URI: %q (%v)", base, err)
 		}
 	})
@@ -206,7 +210,11 @@ Original prompt.
 			t.Fatal(err)
 		}
 		ref, _ := url.Parse("local.json")
-		if got := u.ResolveReference(ref).Path; got != filepath.Join(configDir, "local.json") {
+		wantPath := filepath.ToSlash(filepath.Join(configDir, "local.json"))
+		if !strings.HasPrefix(wantPath, "/") {
+			wantPath = "/" + wantPath
+		}
+		if got := u.ResolveReference(ref).Path; got != wantPath {
 			t.Fatalf("CLI schema reference resolved to %s", got)
 		}
 	})
@@ -453,12 +461,12 @@ func TestParseHelpDoesNotWriteGlobally(t *testing.T) {
 	const child = "SAGEPIPE_CONFIG_HELP_TEST_CHILD"
 	if os.Getenv(child) == "1" {
 		for _, arg := range []string{"-h", "--help"} {
-			if _, err := Parse([]string{arg}, t.TempDir()); err != flag.ErrHelp {
+			if _, err := Parse([]string{arg}, os.TempDir()); err != flag.ErrHelp {
 				t.Fatalf("Parse(%q) = %v, want flag.ErrHelp", arg, err)
 			}
 		}
 		_ = Usage()
-		return
+		os.Exit(0) // Suppress the test runner's own PASS and coverage output.
 	}
 
 	cmd := exec.Command(os.Args[0], "-test.run=^TestParseHelpDoesNotWriteGlobally$")
@@ -467,7 +475,7 @@ func TestParseHelpDoesNotWriteGlobally(t *testing.T) {
 	if err != nil {
 		t.Fatalf("help subprocess: %v\n%s", err, output)
 	}
-	if string(output) != "PASS\n" {
+	if len(output) != 0 {
 		t.Fatalf("help wrote to process stdout or stderr: %q", output)
 	}
 }

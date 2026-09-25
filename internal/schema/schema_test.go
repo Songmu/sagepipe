@@ -11,7 +11,11 @@ import (
 )
 
 func fileURI(path string) string {
-	return (&url.URL{Scheme: "file", Path: filepath.ToSlash(path)}).String()
+	uriPath := filepath.ToSlash(path)
+	if !strings.HasPrefix(uriPath, "/") {
+		uriPath = "/" + uriPath
+	}
+	return (&url.URL{Scheme: "file", Path: uriPath}).String()
 }
 
 func writeFile(t *testing.T, path, content string) {
@@ -43,11 +47,13 @@ func TestLoadFileReferences(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	relative, err := filepath.Rel(cwd, path)
-	if err != nil {
+	paths := []string{path}
+	if relative, err := filepath.Rel(cwd, path); err == nil {
+		paths = append(paths, relative)
+	} else if filepath.VolumeName(cwd) == filepath.VolumeName(path) {
 		t.Fatal(err)
 	}
-	for _, name := range []string{path, relative} {
+	for _, name := range paths {
 		t.Run(name, func(t *testing.T) {
 			doc, err := Load(name)
 			if err != nil {
