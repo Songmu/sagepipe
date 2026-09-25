@@ -308,7 +308,7 @@ func parseFile(c *Config, data []byte, dir string) error {
 }
 
 func onlyComments(data []byte) bool {
-	for _, line := range bytes.Split(data, []byte("\n")) {
+	for line := range bytes.SplitSeq(data, []byte("\n")) {
 		line = bytes.TrimSpace(line)
 		if len(line) != 0 && line[0] != '#' {
 			return false

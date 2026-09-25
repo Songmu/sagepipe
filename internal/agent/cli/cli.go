@@ -165,8 +165,7 @@ func Execute(ctx context.Context, product string, opts Options, args []string, s
 		return fmt.Errorf("%s CLI: subprocess output pipes remained open", product)
 	}
 	if waitErr != nil {
-		var exit *exec.ExitError
-		if errors.As(waitErr, &exit) {
+		if exit, ok := errors.AsType[*exec.ExitError](waitErr); ok {
 			return fmt.Errorf("%s CLI: exited with status %d", product, exit.ExitCode())
 		}
 		return fmt.Errorf("%s CLI: subprocess failed", product)

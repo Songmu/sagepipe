@@ -198,7 +198,7 @@ func (m *mockAgent) Prompt(ctx context.Context, p sdk.PromptRequest) (sdk.Prompt
 		return sdk.PromptResponse{StopReason: sdk.StopReasonEndTurn}, nil
 	}
 	interim := sdk.UpdateAgentMessageText("not the final answer")
-	interim.AgentMessageChunk.MessageId = sdk.Ptr("00000000-0000-4000-8000-000000000001")
+	interim.AgentMessageChunk.MessageId = new("00000000-0000-4000-8000-000000000001")
 	if err := send(p.SessionId, interim); err != nil {
 		return sdk.PromptResponse{}, err
 	}
@@ -217,7 +217,7 @@ func (m *mockAgent) Prompt(ctx context.Context, p sdk.PromptRequest) (sdk.Prompt
 	text := fmt.Sprintf(`{"items":["%s","denied","%s"]}`, p.SessionId, m.model)
 	mid := len(text) / 2
 	first := sdk.UpdateAgentMessageText(text[:mid])
-	first.AgentMessageChunk.MessageId = sdk.Ptr("00000000-0000-4000-8000-000000000002")
+	first.AgentMessageChunk.MessageId = new("00000000-0000-4000-8000-000000000002")
 	if err := send(p.SessionId, first); err != nil {
 		return sdk.PromptResponse{}, err
 	}
@@ -228,7 +228,7 @@ func (m *mockAgent) Prompt(ctx context.Context, p sdk.PromptRequest) (sdk.Prompt
 	}
 	return sdk.PromptResponse{
 		StopReason: sdk.StopReasonEndTurn,
-		Usage:      &sdk.Usage{InputTokens: 11, OutputTokens: 7, CachedReadTokens: sdk.Ptr(3)},
+		Usage:      &sdk.Usage{InputTokens: 11, OutputTokens: 7, CachedReadTokens: new(3)},
 	}, nil
 }
 

@@ -491,7 +491,7 @@ func TestAgentTimeoutIsReportedWithoutLeakingError(t *testing.T) {
 
 func checkDiagnostic(t *testing.T, raw, code string, line int) {
 	t.Helper()
-	for _, part := range strings.Split(strings.TrimSpace(raw), "\n") {
+	for part := range strings.SplitSeq(strings.TrimSpace(raw), "\n") {
 		var obj map[string]any
 		if err := json.Unmarshal([]byte(part), &obj); err != nil {
 			t.Fatalf("diagnostic is not JSON: %q: %v", part, err)

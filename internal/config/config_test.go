@@ -501,7 +501,7 @@ func TestUsage(t *testing.T) {
 			prefix = "-"
 		}
 		count := 0
-		for _, line := range strings.Split(usage, "\n") {
+		for line := range strings.SplitSeq(usage, "\n") {
 			if strings.HasPrefix(line, "  "+prefix+f.Name+" ") && strings.HasSuffix(line, f.Usage) {
 				count++
 			}

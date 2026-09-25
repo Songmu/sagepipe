@@ -44,7 +44,7 @@ func filterToolNotice(text string) (bool, error) {
 	if !ok {
 		return false, nil
 	}
-	for _, name := range strings.Split(names, ", ") {
+	for name := range strings.SplitSeq(names, ", ") {
 		if name == "" || strings.ContainsAny(name, " ,\t\r\n{}[]\"") {
 			return false, errors.New("copilot sent an unrecognized tool notice")
 		}
