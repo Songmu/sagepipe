@@ -13,6 +13,9 @@ func TestNewLaunchRedactsSensitiveArguments(t *testing.T) {
 		"--allowedTools", "private-tool", "other-tool",
 		"--allow-tool=private-policy",
 		"--api_key=private-api-key",
+		"--api-version", "private-api-version",
+		"--key-file=private-key-file",
+		"--authentication-mode", "private-auth-mode",
 		"--access_token", "private-token",
 		"--model", "test-model",
 	}
@@ -24,6 +27,9 @@ func TestNewLaunchRedactsSensitiveArguments(t *testing.T) {
 		"--allowedTools", "<redacted>", "<redacted>",
 		"--allow-tool=<redacted>",
 		"--api_key=<redacted>",
+		"--api-version", "<redacted>",
+		"--key-file=<redacted>",
+		"--authentication-mode", "<redacted>",
 		"--access_token", "<redacted>",
 		"--model", "test-model",
 	}
@@ -39,6 +45,9 @@ func TestNewLaunchRedactsSensitiveArguments(t *testing.T) {
 		"--allowedTools", "private-tool", "other-tool",
 		"--allow-tool=private-policy",
 		"--api_key=private-api-key",
+		"--api-version", "private-api-version",
+		"--key-file=private-key-file",
+		"--authentication-mode", "private-auth-mode",
 		"--access_token", "private-token",
 		"--model", "test-model",
 	}) {

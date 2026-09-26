@@ -71,12 +71,12 @@ func sensitiveLaunchArg(name string) bool {
 		return true
 	}
 	normalized := strings.NewReplacer("-", "", "_", "").Replace(strings.ToLower(name))
-	return strings.Contains(normalized, "token") ||
-		strings.Contains(normalized, "secret") ||
-		strings.Contains(normalized, "password") ||
-		strings.Contains(normalized, "credential") ||
-		strings.Contains(normalized, "authorization") ||
-		strings.Contains(normalized, "apikey")
+	for _, marker := range []string{"api", "auth", "credential", "key", "pass", "secret", "token"} {
+		if strings.Contains(normalized, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 // Usage contains usage figures when the selected agent reports them.
