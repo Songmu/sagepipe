@@ -49,7 +49,7 @@ func TestMapRejectsWholeInvalidAnswerAndContinues(t *testing.T) {
 		switch {
 		case strings.HasSuffix(req.Prompt, `"one"`):
 			return agent.Response{Text: `{"items":["a","b"]}`}, nil
-		case strings.HasSuffix(req.Prompt, `"two"`):
+		case strings.Contains(req.Prompt, "two"):
 			return agent.Response{Text: `{"items":["partial",4]}`}, nil
 		default:
 			return agent.Response{Text: `{"items":[]}`}, nil
@@ -61,10 +61,13 @@ func TestMapRejectsWholeInvalidAnswerAndContinues(t *testing.T) {
 	if got := out.String(); got != "a\nb\n" {
 		t.Errorf("stdout = %q, want only complete valid answers", got)
 	}
-	if len(f.calls) != 3 || f.closed != 1 {
-		t.Errorf("calls=%d closed=%d, want 3 and 1", len(f.calls), f.closed)
+	if len(f.calls) != 5 || f.closed != 1 {
+		t.Errorf("calls=%d closed=%d, want 5 and 1", len(f.calls), f.closed)
 	}
 	checkDiagnostic(t, diag.String(), "invalid_response", 2)
+	if strings.Count(diag.String(), `"reason":"invalid_output"`) != 2 {
+		t.Errorf("invalid output was not retried twice: %s", diag.String())
+	}
 }
 
 func TestMapRetriesEmptyResponseTwice(t *testing.T) {
@@ -200,19 +203,38 @@ func TestMapRegeneratesInvalidJSONFormat(t *testing.T) {
 	}
 }
 
-func TestMapDoesNotRetryCompleteInvalidOutput(t *testing.T) {
+func TestMapRetriesCompleteInvalidOutput(t *testing.T) {
 	cfg := testConfig("map")
+	cfg.Prompt = "Transform it"
+	cfg.Verbosity = 1
 	var out, diag strings.Builder
-	f := &fakeRunner{run: func(agent.Request) (agent.Response, error) {
-		return agent.Response{Text: `{"items":[4]}`}, nil
-	}}
-	if code := Run(context.Background(), cfg, strings.NewReader("input\n"), &out, &diag, f); code != 1 {
+	f := &fakeRunner{}
+	f.run = func(req agent.Request) (agent.Response, error) {
+		if len(f.calls) == 1 {
+			return agent.Response{Text: `{"items":[4]}`}, nil
+		}
+		for _, want := range []string{
+			"Regenerate an agent response that failed output validation.",
+			"every item matching the required type or schema",
+			"Transform it",
+		} {
+			if !strings.Contains(req.Prompt, want) {
+				t.Errorf("output-correction prompt missing %q: %s", want, req.Prompt)
+			}
+		}
+		return agent.Response{Text: `{"items":["recovered"]}`}, nil
+	}
+	if code := Run(context.Background(), cfg, strings.NewReader("input\n"), &out, &diag, f); code != 0 {
 		t.Fatalf("exit code = %d, diagnostics: %s", code, diag.String())
 	}
-	if len(f.calls) != 1 || strings.Contains(diag.String(), `"code":"agent_retry"`) {
-		t.Fatalf("complete invalid output was retried: calls=%d diagnostics=%s", len(f.calls), diag.String())
+	if out.String() != "recovered\n" || len(f.calls) != 2 {
+		t.Fatalf("output=%q calls=%d diagnostics=%s", out.String(), len(f.calls), diag.String())
 	}
-	checkDiagnostic(t, diag.String(), "invalid_response", 1)
+	if !strings.Contains(diag.String(), `"reason":"invalid_output"`) ||
+		!strings.Contains(diag.String(), `"strategy":"regenerate_response"`) ||
+		!strings.Contains(diag.String(), `"recovered":1`) {
+		t.Fatalf("missing output retry diagnostics: %s", diag.String())
+	}
 }
 
 func TestInvalidResponseDetailsAreDebugOnly(t *testing.T) {
@@ -297,11 +319,10 @@ func TestTransformPromptRequiresEnvelopeAndSchemaValidation(t *testing.T) {
 	var out, diag strings.Builder
 	f := &fakeRunner{run: func(req agent.Request) (agent.Response, error) {
 		for _, want := range []string{
-			"Return exactly one JSON object with a single `items` array",
-			"Your entire response must be raw JSON beginning with `{` and ending with `}`",
-			"never wrap it in ```json or any other Markdown code fence",
-			"Do not return a bare item or bare array.",
-			"verify the entire response matches this envelope and every item matches the required type or schema",
+			"Return only one raw JSON object with exactly one property, `items`, whose value is an array.",
+			"Do not include prose, Markdown, code fences, a bare item, or a bare array.",
+			"Use `{\"items\":[]}` when there are no results",
+			"verify the envelope and every item against the required type or schema",
 			"Each result item must satisfy this JSON Schema:",
 			string(cfg.OutputSchema.JSON),
 		} {
@@ -314,6 +335,202 @@ func TestTransformPromptRequiresEnvelopeAndSchemaValidation(t *testing.T) {
 	if code := Run(context.Background(), cfg, strings.NewReader("input\n"), &out, &diag, f); code != 0 {
 		t.Fatalf("exit code = %d, diagnostics: %s", code, diag.String())
 	}
+}
+
+func TestBareStructuredResponsesAreNormalized(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		response   string
+		wantOutput string
+		wantCode   string
+	}{
+		{
+			name:       "object",
+			response:   `{"id":1}`,
+			wantOutput: "{\"id\":1}\n",
+			wantCode:   "bare_item_normalized",
+		},
+		{
+			name:       "scalar allowed by schema",
+			response:   `7`,
+			wantOutput: "7\n",
+			wantCode:   "bare_item_normalized",
+		},
+		{
+			name:       "empty array",
+			response:   `[]`,
+			wantOutput: "",
+			wantCode:   "bare_array_normalized",
+		},
+		{
+			name:       "multiple items",
+			response:   `[{"id":1},{"id":2}]`,
+			wantOutput: "{\"id\":1}\n{\"id\":2}\n",
+			wantCode:   "bare_array_normalized",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := testConfig("map")
+			schemaJSON := `{"type":"integer"}`
+			if tt.name != "scalar allowed by schema" {
+				schemaJSON = `{"type":"object","required":["id"],"properties":{"id":{"type":"integer"}},"additionalProperties":false}`
+			}
+			cfg.OutputSchema = config.SchemaSpec{
+				Present: true,
+				JSON:    []byte(schemaJSON),
+				BaseURI: "file:///tmp/sagepipe-output.json",
+			}
+			var out, diag strings.Builder
+			f := &fakeRunner{run: func(agent.Request) (agent.Response, error) {
+				return agent.Response{Text: tt.response}, nil
+			}}
+			if code := Run(context.Background(), cfg, strings.NewReader("input\n"), &out, &diag, f); code != 0 {
+				t.Fatalf("exit code = %d, diagnostics: %s", code, diag.String())
+			}
+			if out.String() != tt.wantOutput || len(f.calls) != 1 {
+				t.Fatalf("output=%q calls=%d", out.String(), len(f.calls))
+			}
+			checkDiagnostic(t, diag.String(), tt.wantCode, 1)
+		})
+	}
+}
+
+func TestBareTextResponsesAreNormalized(t *testing.T) {
+	cfg := testConfig("map")
+	var out, diag strings.Builder
+	responses := []string{`"one"`, `["two","three"]`}
+	f := &fakeRunner{}
+	f.run = func(agent.Request) (agent.Response, error) {
+		response := responses[len(f.calls)-1]
+		return agent.Response{Text: response}, nil
+	}
+	if code := Run(context.Background(), cfg, strings.NewReader("first\nsecond\n"), &out, &diag, f); code != 0 {
+		t.Fatalf("exit code = %d, diagnostics: %s", code, diag.String())
+	}
+	if out.String() != "one\ntwo\nthree\n" || len(f.calls) != 2 {
+		t.Fatalf("output=%q calls=%d", out.String(), len(f.calls))
+	}
+	checkDiagnostic(t, diag.String(), "bare_item_normalized", 1)
+	checkDiagnostic(t, diag.String(), "bare_array_normalized", 2)
+}
+
+func TestBareArrayFallsBackToArrayValuedItem(t *testing.T) {
+	cfg := testConfig("map")
+	cfg.OutputSchema = config.SchemaSpec{
+		Present: true,
+		JSON:    []byte(`{"type":"array","items":{"type":"integer"}}`),
+		BaseURI: "file:///tmp/sagepipe-output.json",
+	}
+	var out, diag strings.Builder
+	f := &fakeRunner{run: func(agent.Request) (agent.Response, error) {
+		return agent.Response{Text: `[1,2]`}, nil
+	}}
+	if code := Run(context.Background(), cfg, strings.NewReader("input\n"), &out, &diag, f); code != 0 {
+		t.Fatalf("exit code = %d, diagnostics: %s", code, diag.String())
+	}
+	if out.String() != "[1,2]\n" || len(f.calls) != 1 {
+		t.Fatalf("output=%q calls=%d", out.String(), len(f.calls))
+	}
+	checkDiagnostic(t, diag.String(), "bare_item_normalized", 1)
+	if strings.Contains(diag.String(), `"code":"bare_array_normalized"`) {
+		t.Fatalf("array-valued item was split: %s", diag.String())
+	}
+}
+
+func TestBareArrayItemsTakePrecedenceWhenValid(t *testing.T) {
+	cfg := testConfig("map")
+	cfg.OutputSchema = config.SchemaSpec{
+		Present: true,
+		JSON:    []byte(`{"anyOf":[{"type":"integer"},{"type":"array","items":{"type":"integer"}}]}`),
+		BaseURI: "file:///tmp/sagepipe-output.json",
+	}
+	var out, diag strings.Builder
+	f := &fakeRunner{run: func(agent.Request) (agent.Response, error) {
+		return agent.Response{Text: `[1,2]`}, nil
+	}}
+	if code := Run(context.Background(), cfg, strings.NewReader("input\n"), &out, &diag, f); code != 0 {
+		t.Fatalf("exit code = %d, diagnostics: %s", code, diag.String())
+	}
+	if out.String() != "1\n2\n" || len(f.calls) != 1 {
+		t.Fatalf("output=%q calls=%d", out.String(), len(f.calls))
+	}
+	checkDiagnostic(t, diag.String(), "bare_array_normalized", 1)
+	if strings.Contains(diag.String(), `"code":"bare_item_normalized"`) {
+		t.Fatalf("valid array items did not take precedence: %s", diag.String())
+	}
+}
+
+func TestBareTextLineBreakRetries(t *testing.T) {
+	cfg := testConfig("map")
+	var out, diag strings.Builder
+	f := &fakeRunner{}
+	f.run = func(agent.Request) (agent.Response, error) {
+		if len(f.calls) == 1 {
+			return agent.Response{Text: `"bad\nline"`}, nil
+		}
+		return agent.Response{Text: `{"items":["good"]}`}, nil
+	}
+	if code := Run(context.Background(), cfg, strings.NewReader("input\n"), &out, &diag, f); code != 0 {
+		t.Fatalf("exit code = %d, diagnostics: %s", code, diag.String())
+	}
+	if out.String() != "good\n" || len(f.calls) != 2 {
+		t.Fatalf("output=%q calls=%d", out.String(), len(f.calls))
+	}
+	if !strings.Contains(diag.String(), `"reason":"invalid_output"`) ||
+		strings.Contains(diag.String(), `"code":"bare_item_normalized"`) {
+		t.Fatalf("unexpected diagnostics: %s", diag.String())
+	}
+}
+
+func TestInvalidBareArrayRetriesWithoutPartialOutput(t *testing.T) {
+	cfg := testConfig("map")
+	cfg.OutputSchema = config.SchemaSpec{
+		Present: true,
+		JSON:    []byte(`{"type":"object","required":["id"],"properties":{"id":{"type":"integer"}},"additionalProperties":false}`),
+		BaseURI: "file:///tmp/sagepipe-output.json",
+	}
+	var out, diag strings.Builder
+	f := &fakeRunner{}
+	f.run = func(agent.Request) (agent.Response, error) {
+		if len(f.calls) < 3 {
+			return agent.Response{Text: `[{"id":1},{"id":"bad"}]`}, nil
+		}
+		return agent.Response{Text: `[{"id":2}]`}, nil
+	}
+	if code := Run(context.Background(), cfg, strings.NewReader("input\n"), &out, &diag, f); code != 0 {
+		t.Fatalf("exit code = %d, diagnostics: %s", code, diag.String())
+	}
+	if out.String() != "{\"id\":2}\n" || len(f.calls) != 3 {
+		t.Fatalf("output=%q calls=%d", out.String(), len(f.calls))
+	}
+	if strings.Count(diag.String(), `"reason":"invalid_output"`) != 2 ||
+		strings.Count(diag.String(), `"code":"bare_array_normalized"`) != 1 {
+		t.Fatalf("unexpected diagnostics: %s", diag.String())
+	}
+}
+
+func TestCanonicalEnvelopeTakesPrecedenceOverBareObject(t *testing.T) {
+	cfg := testConfig("map")
+	cfg.OutputSchema = config.SchemaSpec{
+		Present: true,
+		JSON:    []byte(`{"type":"object","required":["items"],"properties":{"items":{"type":"array","items":{"type":"integer"}}},"additionalProperties":false}`),
+		BaseURI: "file:///tmp/sagepipe-output.json",
+	}
+	var out, diag strings.Builder
+	f := &fakeRunner{run: func(agent.Request) (agent.Response, error) {
+		return agent.Response{Text: `{"items":[1]}`}, nil
+	}}
+	if code := Run(context.Background(), cfg, strings.NewReader("input\n"), &out, &diag, f); code != 1 {
+		t.Fatalf("exit code = %d, diagnostics: %s", code, diag.String())
+	}
+	if out.Len() != 0 || len(f.calls) != 3 {
+		t.Fatalf("output=%q calls=%d", out.String(), len(f.calls))
+	}
+	if strings.Contains(diag.String(), `"code":"bare_item_normalized"`) ||
+		strings.Count(diag.String(), `"reason":"invalid_output"`) != 2 {
+		t.Fatalf("canonical envelope did not take precedence: %s", diag.String())
+	}
+	checkDiagnostic(t, diag.String(), "invalid_response", 1)
 }
 
 func TestMarkdownJSONFenceIsRemovedWithWarning(t *testing.T) {
@@ -338,6 +555,27 @@ func TestMarkdownJSONFenceIsRemovedWithWarning(t *testing.T) {
 			t.Errorf("valid fenced response was rejected: %s", diag.String())
 		}
 	}
+}
+
+func TestFencedBareResponseIsNormalized(t *testing.T) {
+	cfg := testConfig("map")
+	cfg.OutputSchema = config.SchemaSpec{
+		Present: true,
+		JSON:    []byte(`{"type":"object","required":["id"],"properties":{"id":{"type":"integer"}},"additionalProperties":false}`),
+		BaseURI: "file:///tmp/sagepipe-output.json",
+	}
+	var out, diag strings.Builder
+	f := &fakeRunner{run: func(agent.Request) (agent.Response, error) {
+		return agent.Response{Text: "```json\n{\"id\":1}\n```"}, nil
+	}}
+	if code := Run(context.Background(), cfg, strings.NewReader("input\n"), &out, &diag, f); code != 0 {
+		t.Fatalf("exit code = %d, diagnostics: %s", code, diag.String())
+	}
+	if out.String() != "{\"id\":1}\n" {
+		t.Fatalf("output=%q", out.String())
+	}
+	checkDiagnostic(t, diag.String(), "markdown_fence_removed", 1)
+	checkDiagnostic(t, diag.String(), "bare_item_normalized", 1)
 }
 
 func TestMarkdownFenceWithSurroundingProseRemainsInvalid(t *testing.T) {

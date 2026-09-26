@@ -83,9 +83,9 @@ func TestConcurrentMapContinuesAfterBadRecords(t *testing.T) {
 	cfg.Concurrency = 2
 	runner := &parallelRunner{run: func(_ context.Context, req agent.Request) (agent.Response, error) {
 		switch {
-		case strings.HasSuffix(req.Prompt, `"bad"`):
+		case strings.Contains(req.Prompt, "bad"):
 			return agent.Response{Text: `{"items":["partial",3]}`}, nil
-		case strings.HasSuffix(req.Prompt, `"error"`):
+		case strings.Contains(req.Prompt, "error"):
 			return agent.Response{}, errors.New("failed")
 		default:
 			return agent.Response{Text: `{"items":["ok"]}`}, nil
