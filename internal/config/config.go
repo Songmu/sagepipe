@@ -201,7 +201,7 @@ func cliWorkingDirectory(startupCWD, directory string, set map[string]bool) (str
 
 func loadConfig(cliCWD, configPath string, hasConfig bool, verbosity int) (Config, error) {
 	c := Config{
-		Agent:            AgentConfig{Provider: "copilot", Protocol: "acp"},
+		Agent:            AgentConfig{Provider: "copilot", Protocol: "cli"},
 		CWD:              cliCWD,
 		Mode:             "auto",
 		Concurrency:      1,
@@ -520,9 +520,6 @@ func builtin(provider string) bool {
 }
 
 func defaultProtocol(provider string) string {
-	if provider == "copilot" {
-		return "acp"
-	}
 	return "cli"
 }
 
