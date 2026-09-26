@@ -1,5 +1,10 @@
 # Changelog
 
+## [v0.0.3](https://github.com/Songmu/sagepipe/compare/v0.0.2...v0.0.3) - 2026-09-26
+
+- update readme.md by @Songmu in https://github.com/Songmu/sagepipe/pull/33
+- update gocredits to v1.0.0 by @Songmu in https://github.com/Songmu/sagepipe/pull/35
+
 ## [v0.0.2](https://github.com/Songmu/sagepipe/compare/v0.0.1...v0.0.2) - 2026-09-26
 
 - Add -i/--ignore-failures for successful partial output by @Songmu in https://github.com/Songmu/sagepipe/pull/31
