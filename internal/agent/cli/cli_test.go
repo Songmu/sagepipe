@@ -481,6 +481,10 @@ func TestEventOutputLimitOptions(t *testing.T) {
 	if err != nil || defaults.MaxOutputBytes != 16<<20 {
 		t.Fatalf("unexpected direct-use default: %+v, %v", defaults, err)
 	}
+	relative, err := (cli.Options{Dir: "./relative"}).Prepare("helper")
+	if err != nil || relative.Dir != "./relative" {
+		t.Fatalf("relative directory was rewritten: %+v, %v", relative, err)
+	}
 	maxInt := int64(^uint(0) >> 1)
 	for _, limit := range []int64{33 << 20, maxInt - 1} {
 		opts, err := (cli.Options{MaxOutputBytes: limit}).Prepare("helper")

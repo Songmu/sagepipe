@@ -54,6 +54,7 @@ func newFlagSet(o *flagOptions) *flag.FlagSet {
 	fs.SetOutput(io.Discard)
 	fs.StringVar(&o.configPath, "config", "", "Markdown configuration file")
 	fs.StringVar(&o.directory, "C", "", "working directory")
+	fs.StringVar(&o.directory, "cwd", "", "working directory")
 	fs.StringVar(&o.agent, "agent", "", "agent provider")
 	fs.StringVar(&o.protocol, "protocol", "", "agent protocol")
 	fs.StringVar(&o.model, "model", "", "agent model")
@@ -130,12 +131,19 @@ func Parse(argv []string, startupCWD string) (Config, error) {
 		MaxLineBytes:     1048576,
 		MaxResponseBytes: 8388608,
 	}
+	cwdFlag := ""
 	if set["C"] {
-		if err := validPath(opts.directory, "-C"); err != nil {
+		cwdFlag = "-C"
+	}
+	if set["cwd"] {
+		cwdFlag = "--cwd"
+	}
+	if cwdFlag != "" {
+		if err := validPath(opts.directory, cwdFlag); err != nil {
 			return empty, err
 		}
 		c.CWD = resolve(startupCWD, opts.directory)
-		if err := requireDirectory(c.CWD, "-C"); err != nil {
+		if err := requireDirectory(c.CWD, cwdFlag); err != nil {
 			return empty, err
 		}
 	}
@@ -156,7 +164,7 @@ func Parse(argv []string, startupCWD string) (Config, error) {
 		}
 	}
 
-	if set["C"] {
+	if cwdFlag != "" {
 		c.CWD = resolve(startupCWD, opts.directory)
 	}
 	if set["agent"] {
@@ -181,7 +189,7 @@ func Parse(argv []string, startupCWD string) (Config, error) {
 		if err := validPath(opts.agentCWD, "--agent-cwd"); err != nil {
 			return empty, err
 		}
-		c.Agent.CWD = resolve(c.CWD, opts.agentCWD)
+		c.Agent.CWD = opts.agentCWD
 	}
 	if set["mode"] {
 		c.Mode = opts.mode
@@ -446,7 +454,11 @@ func validate(c *Config) error {
 	if c.Agent.CWD == "" {
 		c.Agent.CWD = c.CWD
 	}
-	if err := requireDirectory(c.Agent.CWD, "agent.cwd"); err != nil {
+	agentCWD := c.Agent.CWD
+	if !filepath.IsAbs(agentCWD) {
+		agentCWD = resolve(c.CWD, agentCWD)
+	}
+	if err := requireDirectory(agentCWD, "agent.cwd"); err != nil {
 		return err
 	}
 	if !validMode(c.Mode) {
