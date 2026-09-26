@@ -128,7 +128,7 @@ func (p *processor) runMapConcurrent(first *record) int {
 				payload, count, err := p.parseOutput(current.resp)
 				if err != nil {
 					p.failures++
-					p.diag.log(slog.LevelError, "invalid_response", "output", "Agent response is not valid output", current.line)
+					p.reportInvalidResponse(err, current.resp, current.line)
 					continue
 				}
 				if err := p.emit(payload, count); err != nil {

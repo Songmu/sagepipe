@@ -67,6 +67,136 @@ func TestMapRejectsWholeInvalidAnswerAndContinues(t *testing.T) {
 	checkDiagnostic(t, diag.String(), "invalid_response", 2)
 }
 
+func TestInvalidResponseDetailsAreDebugOnly(t *testing.T) {
+	const response = `{"items":["valid",4]}`
+	for _, tt := range []struct {
+		name      string
+		verbosity int
+		wantDebug bool
+	}{
+		{"default", 0, false},
+		{"info", 1, false},
+		{"debug", 2, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := testConfig("map")
+			cfg.Verbosity = tt.verbosity
+			var out, diag strings.Builder
+			f := &fakeRunner{run: func(agent.Request) (agent.Response, error) {
+				return agent.Response{Text: response}, nil
+			}}
+			if code := Run(context.Background(), cfg, strings.NewReader("input\n"), &out, &diag, f); code != 1 {
+				t.Fatalf("exit code = %d, diagnostics: %s", code, diag.String())
+			}
+			checkDiagnostic(t, diag.String(), "invalid_response", 1)
+			hasDetail := strings.Contains(diag.String(), `"code":"invalid_response_detail"`)
+			if hasDetail != tt.wantDebug {
+				t.Fatalf("detail present = %t, want %t: %s", hasDetail, tt.wantDebug, diag.String())
+			}
+			if tt.wantDebug {
+				for _, want := range []string{
+					`"reason":"items[1] must be a string"`,
+					`"response":"{\"items\":[\"valid\",4]}"`,
+					`"response_bytes":21`,
+					`"response_truncated":false`,
+				} {
+					if !strings.Contains(diag.String(), want) {
+						t.Errorf("debug diagnostic missing %q: %s", want, diag.String())
+					}
+				}
+			} else if strings.Contains(diag.String(), response) {
+				t.Fatalf("non-debug diagnostics exposed agent response: %s", diag.String())
+			}
+		})
+	}
+}
+
+func TestInvalidResponseDebugPreviewIsBoundedAndValidUTF8(t *testing.T) {
+	cfg := testConfig("map")
+	cfg.Verbosity = 2
+	cfg.MaxResponseBytes = 8192
+	response := strings.Repeat("a", diagnosticResponseLimit-1) + "日本語"
+	var out, diag strings.Builder
+	f := &fakeRunner{run: func(agent.Request) (agent.Response, error) {
+		return agent.Response{Text: response}, nil
+	}}
+	if code := Run(context.Background(), cfg, strings.NewReader("input\n"), &out, &diag, f); code != 1 {
+		t.Fatalf("exit code = %d, diagnostics: %s", code, diag.String())
+	}
+	for part := range strings.SplitSeq(strings.TrimSpace(diag.String()), "\n") {
+		var event map[string]any
+		if err := json.Unmarshal([]byte(part), &event); err != nil {
+			t.Fatalf("diagnostic is not valid UTF-8 JSON: %v", err)
+		}
+		if event["code"] == "invalid_response_detail" {
+			if event["response_truncated"] != true || len(event["response"].(string)) > diagnosticResponseLimit {
+				t.Fatalf("unexpected response preview: %#v", event)
+			}
+			return
+		}
+	}
+	t.Fatal("missing invalid_response_detail")
+}
+
+func TestTransformPromptRequiresEnvelopeAndSchemaValidation(t *testing.T) {
+	cfg := testConfig("map")
+	cfg.Prompt = "Transform it"
+	cfg.OutputSchema = config.SchemaSpec{
+		Present: true,
+		JSON:    []byte(`{"type":"object","required":["id"],"properties":{"id":{"type":"integer"}}}`),
+		BaseURI: "file:///tmp/sagepipe-output.json",
+	}
+	var out, diag strings.Builder
+	f := &fakeRunner{run: func(req agent.Request) (agent.Response, error) {
+		for _, want := range []string{
+			"Return exactly one JSON object with a single `items` array",
+			"Do not return a bare item or bare array.",
+			"verify the entire response matches this envelope and every item matches the required type or schema",
+			"Each result item must satisfy this JSON Schema:",
+			string(cfg.OutputSchema.JSON),
+		} {
+			if !strings.Contains(req.Prompt, want) {
+				t.Errorf("prompt missing %q: %s", want, req.Prompt)
+			}
+		}
+		return agent.Response{Text: `{"items":[]}`}, nil
+	}}
+	if code := Run(context.Background(), cfg, strings.NewReader("input\n"), &out, &diag, f); code != 0 {
+		t.Fatalf("exit code = %d, diagnostics: %s", code, diag.String())
+	}
+}
+
+func TestAgentFailureDetailsAreDebugOnly(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		verbosity int
+		wantDebug bool
+	}{
+		{"default", 0, false},
+		{"debug", 2, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := testConfig("map")
+			cfg.Verbosity = tt.verbosity
+			var out, diag strings.Builder
+			f := &fakeRunner{run: func(agent.Request) (agent.Response, error) {
+				return agent.Response{}, errors.New("private upstream detail")
+			}}
+			if code := Run(context.Background(), cfg, strings.NewReader("input\n"), &out, &diag, f); code != 1 {
+				t.Fatalf("exit code = %d, diagnostics: %s", code, diag.String())
+			}
+			checkDiagnostic(t, diag.String(), "agent_call_failed", 1)
+			hasDetail := strings.Contains(diag.String(), `"code":"agent_call_failed_detail"`)
+			if hasDetail != tt.wantDebug {
+				t.Fatalf("detail present = %t, want %t: %s", hasDetail, tt.wantDebug, diag.String())
+			}
+			if strings.Contains(diag.String(), "private upstream detail") != tt.wantDebug {
+				t.Fatalf("failure detail exposure mismatch: %s", diag.String())
+			}
+		})
+	}
+}
+
 func TestDiagnosticsDoNotEchoToolRules(t *testing.T) {
 	cfg := testConfig("map")
 	cfg.Verbosity = 1

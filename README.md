@@ -90,6 +90,9 @@ error contains JSONL diagnostics with `level`, `code`, `stage`, and `message`;
 input-specific diagnostics also include the one-based physical `line`.
 By default, only WARN and ERROR diagnostics are emitted. `-v` adds INFO
 diagnostics; `-vv` (or repeating `--verbose`) also adds DEBUG diagnostics.
+For invalid agent output, DEBUG diagnostics include the validation reason and
+up to 4096 bytes of the raw response. Agent call failures similarly include the
+underlying error at DEBUG level.
 
 ## Agents and permissions
 
@@ -124,8 +127,9 @@ agent:
 diagnostic with each subprocess command, raw arguments, and working directory.
 In `auto` mode, it also includes a `mode_reason` DEBUG diagnostic with the
 agent's unredacted rationale; the INFO `mode_selected` diagnostic retains a
-fixed, safe reason. Raw arguments and rationale may contain prompts, input data,
-schemas, tool rules, or credentials; they are omitted by default and with `-v`.
+fixed, safe reason. Invalid-response details may contain raw agent output. Raw
+arguments, rationale, and agent output may contain prompts, input data, schemas,
+tool rules, or credentials; they are omitted by default and with `-v`.
 
 > [!WARNING]
 > Enable DEBUG diagnostics only in trusted environments. Prefer environment
