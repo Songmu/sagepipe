@@ -361,23 +361,28 @@ func modelOption(options []sdk.SessionConfigOption, model string) (sdk.SessionCo
 			continue
 		}
 		if selectOption.Options.Ungrouped != nil {
-			for _, choice := range *selectOption.Options.Ungrouped {
-				if string(choice.Value) == model {
-					return selectOption.Id, choice.Value, true
-				}
+			if value, ok := modelChoice(*selectOption.Options.Ungrouped, model); ok {
+				return selectOption.Id, value, true
 			}
 		}
 		if selectOption.Options.Grouped != nil {
 			for _, group := range *selectOption.Options.Grouped {
-				for _, choice := range group.Options {
-					if string(choice.Value) == model {
-						return selectOption.Id, choice.Value, true
-					}
+				if value, ok := modelChoice(group.Options, model); ok {
+					return selectOption.Id, value, true
 				}
 			}
 		}
 	}
 	return "", "", false
+}
+
+func modelChoice(choices []sdk.SessionConfigSelectOption, model string) (sdk.SessionConfigValueId, bool) {
+	for _, choice := range choices {
+		if string(choice.Value) == model {
+			return choice.Value, true
+		}
+	}
+	return "", false
 }
 
 func (r *runner) rpcError(ctx, runCtx context.Context, operation string) error {

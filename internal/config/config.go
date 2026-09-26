@@ -160,6 +160,20 @@ func Parse(argv []string, startupCWD string) (Config, error) {
 	set := make(map[string]bool)
 	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
 
+	c, err := loadConfig(startupCWD, opts, set)
+	if err != nil {
+		return empty, err
+	}
+	if err := applyOverrides(&c, startupCWD, opts, set); err != nil {
+		return empty, err
+	}
+	if err := validate(&c); err != nil {
+		return empty, err
+	}
+	return c, nil
+}
+
+func loadConfig(startupCWD string, opts flagOptions, set map[string]bool) (Config, error) {
 	c := Config{
 		Agent:            AgentConfig{Provider: "copilot", Protocol: "acp"},
 		CWD:              startupCWD,
@@ -178,54 +192,57 @@ func Parse(argv []string, startupCWD string) (Config, error) {
 	}
 	if cwdFlag != "" {
 		if err := validPath(opts.directory, cwdFlag); err != nil {
-			return empty, err
+			return Config{}, err
 		}
 		c.CWD = resolve(startupCWD, opts.directory)
 		if err := requireDirectory(c.CWD, cwdFlag); err != nil {
-			return empty, err
+			return Config{}, err
 		}
 	}
 	if set["config"] {
 		if err := validPath(opts.configPath, "--config"); err != nil {
-			return empty, err
+			return Config{}, err
 		}
 		path := resolve(c.CWD, opts.configPath)
 		data, err := os.ReadFile(path)
 		if err != nil {
-			return empty, fmt.Errorf("config %s: %w", path, err)
+			return Config{}, fmt.Errorf("config %s: %w", path, err)
 		}
 		if !utf8.Valid(data) {
-			return empty, fmt.Errorf("config %s: invalid UTF-8", path)
+			return Config{}, fmt.Errorf("config %s: invalid UTF-8", path)
 		}
 		if err := parseFile(&c, data, filepath.Dir(path)); err != nil {
-			return empty, fmt.Errorf("config %s: %w", path, err)
+			return Config{}, fmt.Errorf("config %s: %w", path, err)
 		}
 	}
+	return c, nil
+}
 
-	if cwdFlag != "" {
+func applyOverrides(c *Config, startupCWD string, opts flagOptions, set map[string]bool) error {
+	if set["C"] || set["cwd"] {
 		c.CWD = resolve(startupCWD, opts.directory)
 	}
 	if set["agent"] {
 		if !builtin(opts.agent) {
-			return empty, fmt.Errorf("--agent: unsupported provider %q", opts.agent)
+			return fmt.Errorf("--agent: unsupported provider %q", opts.agent)
 		}
 		c.Agent = AgentConfig{Provider: opts.agent, Protocol: defaultProtocol(opts.agent)}
 	}
 	if set["protocol"] {
 		if c.Agent.Provider == "" {
-			return empty, errors.New("--protocol cannot override a custom agent")
+			return errors.New("--protocol cannot override a custom agent")
 		}
 		c.Agent.Protocol = opts.protocol
 	}
 	if set["model"] {
 		if opts.model == "" {
-			return empty, errors.New("--model must not be empty")
+			return errors.New("--model must not be empty")
 		}
 		c.Agent.Model = opts.model
 	}
 	if set["agent-cwd"] {
 		if err := validPath(opts.agentCWD, "--agent-cwd"); err != nil {
-			return empty, err
+			return err
 		}
 		c.Agent.CWD = opts.agentCWD
 	}
@@ -239,16 +256,18 @@ func Parse(argv []string, startupCWD string) (Config, error) {
 		c.AllowedTools = opts.allowedTools
 	}
 	if set["input-schema"] {
-		c.InputSchema, err = schemaFromCLI(opts.inputSchema, c.CWD)
+		spec, err := schemaFromCLI(opts.inputSchema, c.CWD)
 		if err != nil {
-			return empty, fmt.Errorf("--input-schema: %w", err)
+			return fmt.Errorf("--input-schema: %w", err)
 		}
+		c.InputSchema = spec
 	}
 	if set["output-schema"] {
-		c.OutputSchema, err = schemaFromCLI(opts.outputSchema, c.CWD)
+		spec, err := schemaFromCLI(opts.outputSchema, c.CWD)
 		if err != nil {
-			return empty, fmt.Errorf("--output-schema: %w", err)
+			return fmt.Errorf("--output-schema: %w", err)
 		}
+		c.OutputSchema = spec
 	}
 	if set["max-input-bytes"] {
 		c.MaxInputBytes = opts.maxInputBytes
@@ -260,15 +279,13 @@ func Parse(argv []string, startupCWD string) (Config, error) {
 		c.MaxResponseBytes = opts.maxResponseBytes
 	}
 	if set["timeout"] {
-		c.Timeout, err = parseTimeout(opts.timeout)
+		timeout, err := parseTimeout(opts.timeout)
 		if err != nil {
-			return empty, fmt.Errorf("--timeout: %w", err)
+			return fmt.Errorf("--timeout: %w", err)
 		}
+		c.Timeout = timeout
 	}
-	if err := validate(&c); err != nil {
-		return empty, err
-	}
-	return c, nil
+	return nil
 }
 
 func parseFile(c *Config, data []byte, dir string) error {
@@ -316,16 +333,18 @@ func parseFile(c *Config, data []byte, dir string) error {
 		c.AllowedTools = v
 	}
 	if raw, ok := fields["input_schema"]; ok {
-		c.InputSchema, err = schemaFromYAML(raw, dir)
+		spec, err := schemaFromYAML(raw, dir)
 		if err != nil {
 			return fmt.Errorf("input_schema: %w", err)
 		}
+		c.InputSchema = spec
 	}
 	if raw, ok := fields["output_schema"]; ok {
-		c.OutputSchema, err = schemaFromYAML(raw, dir)
+		spec, err := schemaFromYAML(raw, dir)
 		if err != nil {
 			return fmt.Errorf("output_schema: %w", err)
 		}
+		c.OutputSchema = spec
 	}
 	for _, entry := range []struct {
 		name   string
@@ -399,6 +418,41 @@ func parseAgent(raw yaml.RawMessage, dir string) (AgentConfig, error) {
 	if err := yaml.Unmarshal(raw, &fields); err != nil || fields == nil {
 		return AgentConfig{}, errors.New("expected a provider name or agent object")
 	}
+	a, err := parseAgentFields(fields)
+	if err != nil {
+		return a, err
+	}
+	if a.Protocol != "" && a.Protocol != "acp" && a.Protocol != "cli" {
+		return a, fmt.Errorf("protocol: unsupported value %q", a.Protocol)
+	}
+	if a.Provider != "" {
+		if !builtin(a.Provider) {
+			return a, fmt.Errorf("unsupported provider %q", a.Provider)
+		}
+		if _, ok := fields["command"]; ok {
+			return a, errors.New("command is only supported for custom agents")
+		}
+		if a.Protocol == "" {
+			a.Protocol = defaultProtocol(a.Provider)
+		}
+	} else {
+		if _, ok := fields["protocol"]; !ok {
+			return a, errors.New("custom agents require protocol: acp")
+		}
+		if a.Command == "" {
+			return a, errors.New("custom agents require command")
+		}
+		if strings.ContainsRune(a.Command, '/') || strings.ContainsRune(a.Command, filepath.Separator) {
+			a.Command = resolve(dir, a.Command)
+		}
+	}
+	if a.CWD != "" {
+		a.CWD = resolve(dir, a.CWD)
+	}
+	return a, nil
+}
+
+func parseAgentFields(fields map[string]yaml.RawMessage) (AgentConfig, error) {
 	var a AgentConfig
 	for name := range fields {
 		switch name {
@@ -435,33 +489,6 @@ func parseAgent(raw yaml.RawMessage, dir string) (AgentConfig, error) {
 				return a, errors.New("args: invalid UTF-8")
 			}
 		}
-	}
-	if a.Protocol != "" && a.Protocol != "acp" && a.Protocol != "cli" {
-		return a, fmt.Errorf("protocol: unsupported value %q", a.Protocol)
-	}
-	if a.Provider != "" {
-		if !builtin(a.Provider) {
-			return a, fmt.Errorf("unsupported provider %q", a.Provider)
-		}
-		if _, ok := fields["command"]; ok {
-			return a, errors.New("command is only supported for custom agents")
-		}
-		if a.Protocol == "" {
-			a.Protocol = defaultProtocol(a.Provider)
-		}
-	} else {
-		if _, ok := fields["protocol"]; !ok {
-			return a, errors.New("custom agents require protocol: acp")
-		}
-		if a.Command == "" {
-			return a, errors.New("custom agents require command")
-		}
-		if strings.ContainsRune(a.Command, '/') || strings.ContainsRune(a.Command, filepath.Separator) {
-			a.Command = resolve(dir, a.Command)
-		}
-	}
-	if a.CWD != "" {
-		a.CWD = resolve(dir, a.CWD)
 	}
 	return a, nil
 }
