@@ -162,14 +162,8 @@ authenticate the selected agent CLI separately before running sagepipe.
 
 ```yaml
 steps:
-  - uses: actions/checkout@v4
-
-  - name: Install sagepipe
-    run: |
-      curl --proto '=https' --tlsv1.2 -fsSL \
-        https://raw.githubusercontent.com/Songmu/sagepipe/main/install.sh |
-        sh -s -- -b "$RUNNER_TEMP/sagepipe/bin"
-      echo "$RUNNER_TEMP/sagepipe/bin" >> "$GITHUB_PATH"
+  - name: Set up sagepipe
+    uses: Songmu/sagepipe@v0
 
   - name: Run sagepipe
     run: |
