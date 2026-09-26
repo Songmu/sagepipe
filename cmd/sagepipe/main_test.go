@@ -40,7 +40,7 @@ func TestSignalCancelsBlockedInput(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer diag.Close()
-			cmd := exec.Command(bin, "--config", cfg)
+			cmd := exec.Command(bin, "-v", "--config", cfg)
 			cmd.Stderr = diag
 			var output strings.Builder
 			cmd.Stdout = &output
@@ -106,7 +106,7 @@ func TestSignalCancelsBlockedInput(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(agentDir, "copilot"), []byte(script), 0700); err != nil {
 			t.Fatal(err)
 		}
-		cmd := exec.Command(bin, "--agent", "copilot", "--protocol", "cli", "--mode", "map", "--prompt", "test")
+		cmd := exec.Command(bin, "-v", "--agent", "copilot", "--protocol", "cli", "--mode", "map", "--prompt", "test")
 		cmd.Env = append(os.Environ(), "PATH="+agentDir+string(os.PathListSeparator)+os.Getenv("PATH"),
 			"SAGEPIPE_AGENT_MARKER="+marker)
 		cmd.Stdin = strings.NewReader("input\n")
