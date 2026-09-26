@@ -83,6 +83,50 @@ func TestDiagnosticsDoNotEchoToolRules(t *testing.T) {
 	}
 }
 
+func TestDiagnosticsLogLaunchArgumentsSafely(t *testing.T) {
+	cfg := testConfig("map")
+	var out, diag strings.Builder
+	f := &fakeRunner{run: func(req agent.Request) (agent.Response, error) {
+		req.OnLaunch(agent.Launch{
+			Command: "copilot",
+			Args: []string{
+				"--disable-builtin-mcps",
+				"--disable-mcp-server=workiq",
+				"-p", "private prompt",
+				"--token=private-token",
+				"--allowedTools", "private-tool", "other-tool",
+				"--allow-tool=private-policy",
+				"--model", "test-model",
+			},
+			CWD: "/tmp/project",
+		})
+		return agent.Response{Text: `{"items":["ok"]}`}, nil
+	}}
+	if code := Run(context.Background(), cfg, strings.NewReader("input\n"), &out, &diag, f); code != 0 {
+		t.Fatalf("exit code = %d, diagnostics: %s", code, diag.String())
+	}
+	logged := diag.String()
+	for _, want := range []string{
+		`"code":"agent_process_starting"`,
+		`"command":"copilot"`,
+		`"--disable-builtin-mcps"`,
+		`"--disable-mcp-server=workiq"`,
+		`"--model"`,
+		`"test-model"`,
+		`"<redacted>"`,
+		`"cwd":"/tmp/project"`,
+	} {
+		if !strings.Contains(logged, want) {
+			t.Fatalf("diagnostics missing %q: %s", want, logged)
+		}
+	}
+	for _, secret := range []string{"private prompt", "private-token", "private-tool", "other-tool", "private-policy"} {
+		if strings.Contains(logged, secret) {
+			t.Fatalf("diagnostics exposed %q: %s", secret, logged)
+		}
+	}
+}
+
 func TestMapRejectsMultilineTextWithoutPartialOutput(t *testing.T) {
 	cfg := testConfig("map")
 	var out, diag strings.Builder

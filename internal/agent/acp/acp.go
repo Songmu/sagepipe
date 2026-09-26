@@ -101,7 +101,7 @@ func New(opts Options) (agent.Runner, error) {
 	}, nil
 }
 
-func (r *runner) start(ctx context.Context) error {
+func (r *runner) start(ctx context.Context, onLaunch func(agent.Launch)) error {
 	r.procMu.Lock()
 	defer r.procMu.Unlock()
 	select {
@@ -125,6 +125,13 @@ func (r *runner) start(ctx context.Context) error {
 	if err != nil {
 		stdin.Close()
 		return errors.New("open ACP output pipe: failed")
+	}
+	if onLaunch != nil {
+		onLaunch(agent.Launch{
+			Command: r.command,
+			Args:    append([]string(nil), r.args...),
+			CWD:     r.cwd,
+		})
 	}
 	if err := cmd.Start(); err != nil {
 		stdin.Close()
@@ -219,7 +226,7 @@ func (r *runner) Run(ctx context.Context, request agent.Request) (response agent
 		}
 	}
 	if r.conn == nil {
-		if err := r.start(ctx); err != nil {
+		if err := r.start(ctx, request.OnLaunch); err != nil {
 			return agent.Response{}, err
 		}
 		if err := r.initialize(ctx); err != nil {

@@ -81,6 +81,7 @@ agent:
   provider: copilot
   protocol: cli
   model: inherited
+  args: [--disable-builtin-mcps, --disable-mcp-server=workiq]
   cwd: ./config dir/agent
 allowed-tools: Read Grep
 input_schema: ./input.json
@@ -109,6 +110,7 @@ Original prompt.
 				t.Helper()
 				if c.CWD != configDir || c.Agent.CWD != agentDir ||
 					c.Agent.Protocol != "cli" || c.Agent.Model != "inherited" ||
+					!reflect.DeepEqual(c.Agent.Args, []string{"--disable-builtin-mcps", "--disable-mcp-server=workiq"}) ||
 					c.AllowedTools != "Read Grep" || c.Prompt != "\nOriginal prompt.\n" ||
 					c.MaxInputBytes != 128 || c.MaxLineBytes != 256 || c.MaxResponseBytes != 512 ||
 					c.Timeout != 2*time.Minute {
@@ -358,7 +360,7 @@ func TestParseRejectsInvalidOptions(t *testing.T) {
 		{"custom allowed tools", "agent: {protocol: acp, command: my-agent}\nallowed-tools: Read", nil, "allowed-tools"},
 		{"custom allowed tools cleared", "agent: {protocol: acp, command: my-agent}\nallowed-tools: Read", []string{"--allowed-tools="}, ""},
 		{"builtin custom command", "agent: {provider: copilot, command: custom}", nil, "command is only"},
-		{"builtin args", "agent: {provider: claude, args: []}", nil, "args are only"},
+		{"builtin args", "agent: {provider: claude, args: [--verbose]}", nil, ""},
 		{"bad agent name", "agent: invalid", nil, "unsupported provider"},
 		{"bad agent type", "agent: [copilot]", nil, "expected a provider"},
 		{"bad agent args type", "agent: {protocol: acp, command: custom, args: [12]}", nil, "args"},

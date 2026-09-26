@@ -88,8 +88,18 @@ input-specific diagnostics also include the one-based physical `line`.
 `copilot` defaults to ACP; `claude` and `codex` use their respective
 non-interactive CLIs. Install and authenticate the selected agent
 separately. Copilot can instead use its CLI with `--protocol cli`. There is
-no automatic fallback between agents or protocols. A custom ACP agent can
-be configured with a command and arguments:
+no automatic fallback between agents or protocols. `agent.args` adds
+arguments before sagepipe's required launch arguments for built-in agents:
+
+```yaml
+agent:
+  provider: copilot
+  args:
+    - --disable-builtin-mcps
+    - --disable-mcp-server=workiq
+```
+
+A custom ACP agent can be configured with a command and arguments:
 
 ```yaml
 agent:
@@ -98,6 +108,10 @@ agent:
   args: [--stdio]
   cwd: ./agent-project
 ```
+
+Each subprocess start is reported as an `agent_process_starting` JSONL
+diagnostic with its command, arguments, and working directory. Prompt text,
+schema bodies, tool rules, and credential-like argument values are redacted.
 
 `allowed-tools` is a top-level, space-separated YAML frontmatter value
 compatible in spelling with Agent Skills. It is passed through the

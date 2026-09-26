@@ -365,6 +365,10 @@ func (p *processor) invoke(prompt string, nativeSchema []byte) (agent.Response, 
 	}
 	resp, err := p.runner.Run(ctx, agent.Request{
 		Prompt: prompt, NativeSchema: nativeSchema, MaxResponseBytes: p.cfg.MaxResponseBytes,
+		OnLaunch: func(launch agent.Launch) {
+			p.diag.log(slog.LevelInfo, "agent_process_starting", "agent", "Starting agent process", 0,
+				"command", launch.Command, "args", safeLaunchArgs(launch.Args), "cwd", launch.CWD)
+		},
 	})
 	if err != nil {
 		return agent.Response{}, err

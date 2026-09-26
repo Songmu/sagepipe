@@ -398,9 +398,6 @@ func parseAgent(raw yaml.RawMessage, dir string) (AgentConfig, error) {
 		if _, ok := fields["command"]; ok {
 			return a, errors.New("command is only supported for custom agents")
 		}
-		if _, ok := fields["args"]; ok {
-			return a, errors.New("args are only supported for custom agents")
-		}
 		if a.Protocol == "" {
 			a.Protocol = defaultProtocol(a.Provider)
 		}

@@ -30,7 +30,8 @@ func (r *Runner) Run(ctx context.Context, req agent.Request) (response agent.Res
 	if len(r.options.AllowedTools) != 0 {
 		return response, errors.New("codex CLI: allowed-tools is unsupported")
 	}
-	args := []string{"exec", "--json"}
+	args := append([]string(nil), r.options.Args...)
+	args = append(args, "exec", "--json")
 	if r.options.Model != "" {
 		args = append(args, "--model", r.options.Model)
 	}
@@ -66,7 +67,7 @@ func (r *Runner) Run(ctx context.Context, req agent.Request) (response agent.Res
 	args = append(args, "-")
 	var final string
 	var seenMessage, completed bool
-	err = cli.Execute(ctx, "Codex", r.options, args, strings.NewReader(req.Prompt), func(line []byte) error {
+	err = cli.Execute(ctx, "Codex", r.options, args, strings.NewReader(req.Prompt), req.OnLaunch, func(line []byte) error {
 		if !utf8.Valid(line) {
 			return errors.New("invalid Codex CLI JSON event")
 		}

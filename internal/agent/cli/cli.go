@@ -16,6 +16,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/Songmu/sagepipe/internal/agent"
 	"github.com/Songmu/sagepipe/internal/agent/process"
 )
 
@@ -34,6 +35,7 @@ var errStderrLimit = errors.New("stderr limit exceeded")
 // the platform's maximum int so that the scanner can represent the limit + 1.
 type Options struct {
 	Program        string
+	Args           []string
 	Dir            string
 	Model          string
 	AllowedTools   []string
@@ -64,6 +66,7 @@ func (o Options) Prepare(defaultProgram string) (Options, error) {
 		return Options{}, errors.New("CLI: output limit cannot fit platform scanner")
 	}
 	o.AllowedTools = append([]string(nil), o.AllowedTools...)
+	o.Args = append([]string(nil), o.Args...)
 	return o, nil
 }
 
@@ -73,7 +76,15 @@ func validOutputLimit(limit int64) bool {
 
 // Execute starts a fresh process, passes stdin without a shell, and calls onLine
 // for each bounded stdout JSON line. Neither stdout nor stderr is included in errors.
-func Execute(ctx context.Context, product string, opts Options, args []string, stdin io.Reader, onLine func([]byte) error) error {
+func Execute(
+	ctx context.Context,
+	product string,
+	opts Options,
+	args []string,
+	stdin io.Reader,
+	onLaunch func(agent.Launch),
+	onLine func([]byte) error,
+) error {
 	if !validOutputLimit(opts.MaxOutputBytes) || onLine == nil {
 		return errors.New("CLI: invalid subprocess options")
 	}
@@ -90,6 +101,13 @@ func Execute(ctx context.Context, product string, opts Options, args []string, s
 	stderr, stderrWriter := io.Pipe()
 	cmd.Stdout = stdoutWriter
 	cmd.Stderr = stderrWriter
+	if onLaunch != nil {
+		onLaunch(agent.Launch{
+			Command: opts.Program,
+			Args:    append([]string(nil), args...),
+			CWD:     opts.Dir,
+		})
+	}
 	if err := cmd.Start(); err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()

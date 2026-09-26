@@ -34,7 +34,8 @@ func (r *CLIRunner) Run(ctx context.Context, req agent.Request) (agent.Response,
 		}
 		response.Warnings = append(response.Warnings, "Copilot CLI does not support native output schemas; using prompt instructions and local validation")
 	}
-	args := []string{"--output-format=json", "--no-ask-user"}
+	args := append([]string(nil), r.options.Args...)
+	args = append(args, "--output-format=json", "--no-ask-user")
 	if r.options.Model != "" {
 		args = append(args, "--model", r.options.Model)
 	}
@@ -53,7 +54,7 @@ func (r *CLIRunner) Run(ctx context.Context, req agent.Request) (agent.Response,
 	}
 	var final string
 	var seenResult, seenMessage bool
-	err := cli.Execute(ctx, "Copilot", r.options, args, stdin, func(line []byte) error {
+	err := cli.Execute(ctx, "Copilot", r.options, args, stdin, req.OnLaunch, func(line []byte) error {
 		if !utf8.Valid(line) {
 			return errors.New("invalid Copilot CLI JSON event")
 		}

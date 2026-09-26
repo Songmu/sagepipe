@@ -27,7 +27,8 @@ func New(options cli.Options) (*Runner, error) {
 
 func (r *Runner) Run(ctx context.Context, req agent.Request) (agent.Response, error) {
 	var response agent.Response
-	args := []string{"-p", "--output-format=json"}
+	args := append([]string(nil), r.options.Args...)
+	args = append(args, "-p", "--output-format=json")
 	if r.options.Model != "" {
 		args = append(args, "--model", r.options.Model)
 	}
@@ -59,7 +60,7 @@ func (r *Runner) Run(ctx context.Context, req agent.Request) (agent.Response, er
 	}
 	var seen bool
 	var final string
-	err := cli.Execute(ctx, "Claude", r.options, args, strings.NewReader(req.Prompt), func(line []byte) error {
+	err := cli.Execute(ctx, "Claude", r.options, args, strings.NewReader(req.Prompt), req.OnLaunch, func(line []byte) error {
 		if !utf8.Valid(line) {
 			return errors.New("invalid Claude CLI JSON result")
 		}
