@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"reflect"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -137,23 +137,30 @@ func TestNewACPLaunchArguments(t *testing.T) {
 				t.Fatal(err)
 			}
 			got := strings.Split(strings.TrimSpace(string(data)), "\n")
-			if !reflect.DeepEqual(got, tt.want) {
+			if !slices.Equal(got, tt.want) {
 				t.Fatalf("args = %q, want %q", got, tt.want)
 			}
 		})
 	}
 
-	for _, tools := range []string{"  \t", "Read,Grep", "read", "Read"} {
-		if err := os.Remove(argsFile); err != nil && !os.IsNotExist(err) {
-			t.Fatal(err)
-		}
-		r, err := NewACP("", t.TempDir(), tools, nil)
-		if r != nil || err == nil || !strings.Contains(err.Error(), "allowed-tools") {
-			t.Fatalf("NewACP(tools=%q) = (%v, %v)", tools, r, err)
-		}
-		if _, err := os.Stat(argsFile); !os.IsNotExist(err) {
-			t.Fatalf("invalid tools launched Copilot: %v", err)
-		}
+	for _, tt := range []struct{ name, tools string }{
+		{"whitespace", "  \t"},
+		{"comma separated", "Read,Grep"},
+		{"lowercase", "read"},
+		{"unknown", "Read"},
+	} {
+		t.Run("invalid tools/"+tt.name, func(t *testing.T) {
+			if err := os.Remove(argsFile); err != nil && !os.IsNotExist(err) {
+				t.Fatal(err)
+			}
+			r, err := NewACP("", t.TempDir(), tt.tools, nil)
+			if r != nil || err == nil || !strings.Contains(err.Error(), "allowed-tools") {
+				t.Fatalf("NewACP(tools=%q) = (%v, %v)", tt.tools, r, err)
+			}
+			if _, err := os.Stat(argsFile); !os.IsNotExist(err) {
+				t.Fatalf("invalid tools launched Copilot: %v", err)
+			}
+		})
 	}
 	r, err := NewACP("", t.TempDir(), "", nil)
 	if err != nil {

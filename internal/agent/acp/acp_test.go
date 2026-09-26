@@ -530,18 +530,25 @@ func processStarts(t *testing.T, path string) int {
 	return strings.Count(string(data), "\n")
 }
 
-func TestRunLimitsAndSanitizedErrors(t *testing.T) {
+func TestRunFailureAndRecovery(t *testing.T) {
 	for _, tt := range []struct {
 		prompt, want string
 		limit        int64
+		recycle      bool
 	}{
-		{"large", "response byte limit", 4},
-		{"incomplete", "did not complete", 100},
-		{"secret", "prompt ACP agent: failed", 100},
-		{"closefail", "close ACP session: failed", 100},
+		{"large", "response byte limit exceeded", 4, true},
+		{"incomplete", "did not complete", 100, false},
+		{"secret", "prompt ACP agent: failed", 100, false},
+		{"closefail", "close ACP session: failed", 100, true},
+		{"disconnect", "ACP connection was lost", 100, true},
 	} {
 		t.Run(tt.prompt, func(t *testing.T) {
-			r, err := New(mockOptions(t))
+			opts := mockOptions(t)
+			startLog := filepath.Join(opts.CWD, "starts")
+			if tt.recycle {
+				t.Setenv("SAGEPIPE_ACP_TEST_START_LOG", startLog)
+			}
+			r, err := New(opts)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -550,32 +557,8 @@ func TestRunLimitsAndSanitizedErrors(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), tt.want) || strings.Contains(err.Error(), "sensitive") {
 				t.Fatalf("Run error = %v", err)
 			}
-		})
-	}
-}
-
-func TestRunRecyclesAfterRequestFailure(t *testing.T) {
-	for _, tt := range []struct {
-		prompt, want string
-		limit        int64
-	}{
-		{"large", "response byte limit exceeded", 4},
-		{"closefail", "close ACP session: failed", 100},
-		{"disconnect", "ACP connection was lost", 100},
-	} {
-		t.Run(tt.prompt, func(t *testing.T) {
-			opts := mockOptions(t)
-			startLog := filepath.Join(opts.CWD, "starts")
-			t.Setenv("SAGEPIPE_ACP_TEST_START_LOG", startLog)
-			r, err := New(opts)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer r.Close()
-
-			_, err = r.Run(context.Background(), agent.Request{Prompt: tt.prompt, MaxResponseBytes: tt.limit})
-			if err == nil || !strings.Contains(err.Error(), tt.want) {
-				t.Fatalf("first Run error = %v, want %q", err, tt.want)
+			if !tt.recycle {
+				return
 			}
 			state := r.(*runner)
 			if state.cmd != nil || state.conn != nil || !state.waited {

@@ -243,36 +243,32 @@ func TestReduceWithNoValidRecordsDoesNotCallAgent(t *testing.T) {
 	}
 }
 
-func TestMapInvalidUTF8SkipsLineAndKeepsPhysicalLineNumber(t *testing.T) {
-	cfg := testConfig("map")
-	var out, diag strings.Builder
-	f := &fakeRunner{run: func(agent.Request) (agent.Response, error) {
-		return agent.Response{Text: `{"items":["ok"]}`}, nil
-	}}
-	in := strings.NewReader(string([]byte{0xff, '\n'}) + "valid\n")
-	if code := Run(context.Background(), cfg, in, &out, &diag, f); code != 1 {
-		t.Fatalf("exit code = %d, want 1; diagnostics: %s", code, diag.String())
+func TestMapSkipsInvalidInputLines(t *testing.T) {
+	for _, tt := range []struct {
+		name         string
+		input        string
+		maxLineBytes int64
+		diagnostic   string
+	}{
+		{"invalid UTF-8", string([]byte{0xff, '\n'}) + "valid\n", 64, "invalid_utf8"},
+		{"oversized line", "four\nok\r\n", 3, "line_too_long"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := testConfig("map")
+			cfg.MaxLineBytes = tt.maxLineBytes
+			var out, diag strings.Builder
+			f := &fakeRunner{run: func(agent.Request) (agent.Response, error) {
+				return agent.Response{Text: `{"items":["ok"]}`}, nil
+			}}
+			if code := Run(context.Background(), cfg, strings.NewReader(tt.input), &out, &diag, f); code != 1 {
+				t.Fatalf("exit code = %d, want 1; diagnostics: %s", code, diag.String())
+			}
+			if out.String() != "ok\n" || len(f.calls) != 1 {
+				t.Errorf("stdout=%q calls=%d", out.String(), len(f.calls))
+			}
+			checkDiagnostic(t, diag.String(), tt.diagnostic, 1)
+		})
 	}
-	if out.String() != "ok\n" || len(f.calls) != 1 {
-		t.Errorf("stdout=%q calls=%d", out.String(), len(f.calls))
-	}
-	checkDiagnostic(t, diag.String(), "invalid_utf8", 1)
-}
-
-func TestMapOversizedLineSkipsToNextLine(t *testing.T) {
-	cfg := testConfig("map")
-	cfg.MaxLineBytes = 3
-	var out, diag strings.Builder
-	f := &fakeRunner{run: func(agent.Request) (agent.Response, error) {
-		return agent.Response{Text: `{"items":["ok"]}`}, nil
-	}}
-	if code := Run(context.Background(), cfg, strings.NewReader("four\nok\r\n"), &out, &diag, f); code != 1 {
-		t.Fatalf("exit code = %d, want 1; diagnostics: %s", code, diag.String())
-	}
-	if out.String() != "ok\n" || len(f.calls) != 1 {
-		t.Errorf("stdout=%q calls=%d", out.String(), len(f.calls))
-	}
-	checkDiagnostic(t, diag.String(), "line_too_long", 1)
 }
 
 func TestInputAndOutputFormatsAreIndependent(t *testing.T) {
@@ -653,33 +649,53 @@ func TestCopilotACPUsesPromptAndLocalValidationWithoutNativeHint(t *testing.T) {
 	}
 }
 
-func TestAgentFailureSkipsOnlyMapRecord(t *testing.T) {
-	cfg := testConfig("map")
-	var out, diag strings.Builder
-	f := &fakeRunner{run: func(req agent.Request) (agent.Response, error) {
-		if strings.HasSuffix(req.Prompt, `"first"`) {
-			return agent.Response{}, errors.New("input text should not appear in diagnostics")
-		}
-		return agent.Response{Text: `{"items":["second"]}`}, nil
-	}}
-	if code := Run(context.Background(), cfg, strings.NewReader("first\nsecond\n"), &out, &diag, f); code != 1 {
-		t.Fatalf("exit code = %d, want 1; diagnostics: %s", code, diag.String())
+func TestMapAgentFailures(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		input      string
+		firstError error
+		wantOutput string
+		wantCalls  int
+		diagnostic string
+		noLeak     string
+	}{
+		{
+			name: "failure skips only one record", input: "first\nsecond\n",
+			firstError: errors.New("input text should not appear in diagnostics"),
+			wantOutput: "second\n", wantCalls: 2, diagnostic: "agent_call_failed",
+			noLeak: "input text should not appear",
+		},
+		{
+			name: "timeout reported", input: "input\n",
+			firstError: context.DeadlineExceeded, wantCalls: 1, diagnostic: "agent_timeout",
+		},
+		{
+			name: "timeout continues to next record", input: "first\nsecond\n",
+			firstError: context.DeadlineExceeded, wantOutput: "second\n",
+			wantCalls: 2, diagnostic: "agent_timeout",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var out, diag strings.Builder
+			f := &fakeRunner{}
+			f.run = func(agent.Request) (agent.Response, error) {
+				if len(f.calls) == 1 {
+					return agent.Response{}, tt.firstError
+				}
+				return agent.Response{Text: `{"items":["second"]}`}, nil
+			}
+			if code := Run(context.Background(), testConfig("map"), strings.NewReader(tt.input), &out, &diag, f); code != 1 {
+				t.Fatalf("exit code = %d, want 1; diagnostics: %s", code, diag.String())
+			}
+			if len(f.calls) != tt.wantCalls || out.String() != tt.wantOutput {
+				t.Errorf("calls=%d stdout=%q, want %d and %q", len(f.calls), out.String(), tt.wantCalls, tt.wantOutput)
+			}
+			if tt.noLeak != "" && strings.Contains(diag.String(), tt.noLeak) {
+				t.Errorf("error leaked into diagnostics: %s", diag.String())
+			}
+			checkDiagnostic(t, diag.String(), tt.diagnostic, 1)
+		})
 	}
-	if out.String() != "second\n" || strings.Contains(diag.String(), "input text should not appear") {
-		t.Errorf("stdout=%q diagnostics=%s", out.String(), diag.String())
-	}
-}
-
-func TestAgentTimeoutIsReportedWithoutLeakingError(t *testing.T) {
-	cfg := testConfig("map")
-	var out, diag strings.Builder
-	f := &fakeRunner{run: func(agent.Request) (agent.Response, error) {
-		return agent.Response{}, context.DeadlineExceeded
-	}}
-	if code := Run(context.Background(), cfg, strings.NewReader("input\n"), &out, &diag, f); code != 1 {
-		t.Fatalf("exit code = %d, want 1; diagnostics: %s", code, diag.String())
-	}
-	checkDiagnostic(t, diag.String(), "agent_timeout", 1)
 }
 
 func TestGlobalCancellationStopsMapAfterActiveRequest(t *testing.T) {
@@ -699,25 +715,6 @@ func TestGlobalCancellationStopsMapAfterActiveRequest(t *testing.T) {
 		strings.Contains(diag.String(), `"code":"input_cancelled"`) {
 		t.Errorf("calls=%d closed=%d stdout=%q diagnostics=%s", len(f.calls), f.closed, out.String(), diag.String())
 	}
-}
-
-func TestMapContinuesAfterPerRequestTimeout(t *testing.T) {
-	var out, diag strings.Builder
-	calls := 0
-	f := &fakeRunner{run: func(agent.Request) (agent.Response, error) {
-		calls++
-		if calls == 1 {
-			return agent.Response{}, context.DeadlineExceeded
-		}
-		return agent.Response{Text: `{"items":["second"]}`}, nil
-	}}
-	if code := Run(context.Background(), testConfig("map"), strings.NewReader("first\nsecond\n"), &out, &diag, f); code != 1 {
-		t.Fatalf("exit code = %d, want 1; diagnostics: %s", code, diag.String())
-	}
-	if len(f.calls) != 2 || out.String() != "second\n" {
-		t.Errorf("calls=%d stdout=%q", len(f.calls), out.String())
-	}
-	checkDiagnostic(t, diag.String(), "agent_timeout", 1)
 }
 
 func checkDiagnostic(t *testing.T, raw, code string, line int) {

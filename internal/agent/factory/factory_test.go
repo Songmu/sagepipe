@@ -1,7 +1,7 @@
 package factory
 
 import (
-	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -9,27 +9,44 @@ import (
 )
 
 func TestSplitAllowedTools(t *testing.T) {
-	got, err := splitAllowedTools("Read Bash(git status:*) Grep")
-	want := []string{"Read", "Bash(git status:*)", "Grep"}
-	if err != nil || !reflect.DeepEqual(got, want) {
-		t.Fatalf("tools=%q err=%v, want %q", got, err, want)
-	}
-	for _, input := range []string{"Bash(git status:*", "Read )"} {
-		if _, err := splitAllowedTools(input); err == nil {
-			t.Errorf("expected invalid pattern: %q", input)
-		}
+	for _, tt := range []struct {
+		name, input string
+		want        []string
+		wantErr     bool
+	}{
+		{"tool with spaces", "Read Bash(git status:*) Grep", []string{"Read", "Bash(git status:*)", "Grep"}, false},
+		{"unclosed pattern", "Bash(git status:*", nil, true},
+		{"unexpected closing parenthesis", "Read )", nil, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := splitAllowedTools(tt.input)
+			if (err != nil) != tt.wantErr || (!tt.wantErr && !slices.Equal(got, tt.want)) {
+				t.Fatalf("splitAllowedTools(%q) = (%q, %v), want (%q, error=%t)",
+					tt.input, got, err, tt.want, tt.wantErr)
+			}
+		})
 	}
 }
 
 func TestEventLimit(t *testing.T) {
-	limit, err := eventLimit(8388608)
-	if err != nil || limit < 8388608*6 {
-		t.Fatalf("event limit=%d err=%v", limit, err)
-	}
-	for _, value := range []int64{0, -1, 1<<63 - 1} {
-		if _, err := eventLimit(value); err == nil {
-			t.Errorf("expected error for response limit %d", value)
-		}
+	for _, tt := range []struct {
+		name    string
+		value   int64
+		minimum int64
+		wantErr bool
+	}{
+		{"valid limit", 8388608, 8388608 * 6, false},
+		{"zero", 0, 0, true},
+		{"negative", -1, 0, true},
+		{"overflow", 1<<63 - 1, 0, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			limit, err := eventLimit(tt.value)
+			if (err != nil) != tt.wantErr || (!tt.wantErr && limit < tt.minimum) {
+				t.Fatalf("eventLimit(%d) = (%d, %v), want at least %d, error=%t",
+					tt.value, limit, err, tt.minimum, tt.wantErr)
+			}
+		})
 	}
 }
 

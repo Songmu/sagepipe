@@ -37,6 +37,16 @@ func mustDecode(t *testing.T, raw string) any {
 	return value
 }
 
+func assertAcceptsAndRejects(t *testing.T, doc *Document, valid, invalid string) {
+	t.Helper()
+	if err := doc.Validate(mustDecode(t, valid)); err != nil {
+		t.Fatalf("%s should be accepted: %v", valid, err)
+	}
+	if err := doc.Validate(mustDecode(t, invalid)); err == nil {
+		t.Fatalf("%s should be rejected", invalid)
+	}
+}
+
 func TestLoadFileReferences(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "a folder #1")
 	path := filepath.Join(dir, "root #.json")
@@ -59,12 +69,7 @@ func TestLoadFileReferences(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := doc.Validate(mustDecode(t, "2")); err != nil {
-				t.Fatal(err)
-			}
-			if err := doc.Validate(mustDecode(t, "1")); err == nil {
-				t.Fatal("expected local reference to enforce minimum")
-			}
+			assertAcceptsAndRejects(t, doc, "2", "1")
 		})
 	}
 }
@@ -79,12 +84,7 @@ func TestReferencedSchemaUsesItsOwnDraft(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := doc.Validate(mustDecode(t, `"person@example.com"`)); err != nil {
-		t.Fatal(err)
-	}
-	if err := doc.Validate(mustDecode(t, `"not-an-email"`)); err == nil {
-		t.Fatal("referenced Draft-07 format assertion was not applied")
-	}
+	assertAcceptsAndRejects(t, doc, `"person@example.com"`, `"not-an-email"`)
 }
 
 func TestInlineBaseAndRootFragment(t *testing.T) {
@@ -112,12 +112,7 @@ func TestInlineBaseAndRootFragment(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := doc.Validate(mustDecode(t, tc.valid)); err != nil {
-				t.Fatal(err)
-			}
-			if err := doc.Validate(mustDecode(t, tc.invalid)); err == nil {
-				t.Fatal("expected invalid value to be rejected")
-			}
+			assertAcceptsAndRejects(t, doc, tc.valid, tc.invalid)
 		})
 	}
 }
@@ -182,12 +177,7 @@ func TestDraftsAndFormats(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := doc.Validate(mustDecode(t, "2")); err != nil {
-				t.Fatal(err)
-			}
-			if err := doc.Validate(mustDecode(t, "1")); err == nil {
-				t.Fatal("minimum was not applied")
-			}
+			assertAcceptsAndRejects(t, doc, "2", "1")
 		})
 	}
 
@@ -216,12 +206,12 @@ func TestRequiredVocabs(t *testing.T) {
 	meta := filepath.Join(dir, "meta.json")
 	base := fileURI(filepath.Join(dir, "schema.json"))
 	for _, tc := range []struct {
-		name, vocab string
-		required    bool
+		name, vocab                         string
+		required, compileError, rejectEmail bool
 	}{
-		{"format assertion", "https://json-schema.org/draft/2020-12/vocab/format-assertion", true},
-		{"unsupported required", "https://example.invalid/vocab/extra", true},
-		{"unsupported optional", "https://example.invalid/vocab/extra", false},
+		{name: "format assertion", vocab: "https://json-schema.org/draft/2020-12/vocab/format-assertion", required: true, rejectEmail: true},
+		{name: "unsupported required", vocab: "https://example.invalid/vocab/extra", required: true, compileError: true},
+		{name: "unsupported optional", vocab: "https://example.invalid/vocab/extra"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			metaJSON, err := json.Marshal(map[string]any{
@@ -239,7 +229,7 @@ func TestRequiredVocabs(t *testing.T) {
 				t.Fatal(err)
 			}
 			doc, err := Inline(raw, base)
-			if tc.name == "unsupported required" {
+			if tc.compileError {
 				if err == nil {
 					t.Fatal("expected unsupported required vocabulary to fail")
 				}
@@ -249,7 +239,7 @@ func TestRequiredVocabs(t *testing.T) {
 				t.Fatal(err)
 			}
 			err = doc.Validate(mustDecode(t, `"not-an-email"`))
-			if (err != nil) != (tc.name == "format assertion") {
+			if (err != nil) != tc.rejectEmail {
 				t.Fatalf("unexpected format assertion result: %v", err)
 			}
 		})

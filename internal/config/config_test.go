@@ -70,19 +70,19 @@ func TestParseDefaultsAndPrompt(t *testing.T) {
 func TestParseVerbosity(t *testing.T) {
 	root := t.TempDir()
 	for _, tt := range []struct {
-		name string
-		args []string
-		want int
+		name, wantPrompt string
+		args             []string
+		want             int
 	}{
-		{"default", nil, 0},
-		{"short", []string{"-v"}, 1},
-		{"long", []string{"--verbose"}, 1},
-		{"repeated", []string{"-v", "--verbose"}, 2},
-		{"grouped", []string{"-vv"}, 2},
-		{"grouped and repeated", []string{"-vv", "-v"}, 3},
-		{"longer group", []string{"-vvv"}, 3},
-		{"explicit false", []string{"-v", "--verbose=false"}, 0},
-		{"option value", []string{"--prompt", "-vv"}, 0},
+		{name: "default"},
+		{name: "short", args: []string{"-v"}, want: 1},
+		{name: "long", args: []string{"--verbose"}, want: 1},
+		{name: "repeated", args: []string{"-v", "--verbose"}, want: 2},
+		{name: "grouped", args: []string{"-vv"}, want: 2},
+		{name: "grouped and repeated", args: []string{"-vv", "-v"}, want: 3},
+		{name: "longer group", args: []string{"-vvv"}, want: 3},
+		{name: "explicit false", args: []string{"-v", "--verbose=false"}},
+		{name: "option value", args: []string{"--prompt", "-vv"}, wantPrompt: "-vv"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg, err := Parse(tt.args, root)
@@ -92,8 +92,8 @@ func TestParseVerbosity(t *testing.T) {
 			if cfg.Verbosity != tt.want {
 				t.Fatalf("verbosity = %d, want %d", cfg.Verbosity, tt.want)
 			}
-			if tt.name == "option value" && cfg.Prompt != "-vv" {
-				t.Fatalf("prompt = %q, want -vv", cfg.Prompt)
+			if cfg.Prompt != tt.wantPrompt {
+				t.Fatalf("prompt = %q, want %q", cfg.Prompt, tt.wantPrompt)
 			}
 		})
 	}
@@ -318,72 +318,55 @@ agent:
 func TestParseSchemaForms(t *testing.T) {
 	root := t.TempDir()
 	for _, tt := range []struct {
-		name, yamlValue string
-		isPath          bool
-		json            string
+		name, yamlValue, cliValue, path, json string
 	}{
-		{"false YAML", "false", false, "false"},
-		{"true YAML", "true", false, "true"},
-		{"string true is a path", `"true"`, true, ""},
-		{"string object is a path", `'{"type":"string"}'`, true, ""},
-		{"inline mapping", "{type: object}", false, `{"type":"object"}`},
-		{"nested numbers and strings", `{properties: {n: {minimum: 0.123456789012345678901, maximum: 1.234567890123456789e20}}, title: "0.1"}`, false, `{"properties":{"n":{"minimum":0.123456789012345678901,"maximum":1.234567890123456789e20}},"title":"0.1"}`},
+		{name: "false YAML", yamlValue: "false", json: "false"},
+		{name: "true YAML", yamlValue: "true", json: "true"},
+		{name: "string true is a path", yamlValue: `"true"`, path: "true"},
+		{name: "string object is a path", yamlValue: `'{"type":"string"}'`, path: `{"type":"string"}`},
+		{name: "inline mapping", yamlValue: "{type: object}", json: `{"type":"object"}`},
+		{name: "nested numbers and strings", yamlValue: `{properties: {n: {minimum: 0.123456789012345678901, maximum: 1.234567890123456789e20}}, title: "0.1"}`, json: `{"properties":{"n":{"minimum":0.123456789012345678901,"maximum":1.234567890123456789e20}},"title":"0.1"}`},
+		{name: "JSON false", cliValue: " false ", json: "false"},
+		{name: "JSON true", cliValue: "true", json: "true"},
+		{name: "JSON object", cliValue: `{"type":"object"}`, json: `{"type":"object"}`},
+		{name: "boolean filename", cliValue: "./false", path: "./false"},
+		{name: "array filename", cliValue: "[schema]", path: "[schema]"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			writeConfig(t, filepath.Join(root, "schema.md"), "---\noutput_schema: "+tt.yamlValue+"\n---\n")
-			c, err := Parse([]string{"--config", "schema.md"}, root)
-			if err != nil {
-				t.Fatal(err)
+			var args []string
+			if tt.yamlValue != "" {
+				writeConfig(t, filepath.Join(root, "schema.md"), "---\noutput_schema: "+tt.yamlValue+"\n---\n")
+				args = []string{"--config", "schema.md"}
+			} else {
+				args = []string{"--input-schema", tt.cliValue}
 			}
-			t.Run("large CLI schema numbers are not parsed as float64", func(t *testing.T) {
-				raw := `{"minimum":1e1000}`
-				c, err := Parse([]string{"--input-schema", raw}, root)
-				if err != nil || string(c.InputSchema.JSON) != raw {
-					t.Fatalf("lost number precision: %q, %v", c.InputSchema.JSON, err)
-				}
-			})
-			s := c.OutputSchema
-			if !s.Present {
-				t.Fatal("schema was not marked present")
-			}
-			if tt.isPath {
-				if s.Path != filepath.Join(root, strings.Trim(tt.yamlValue, `"'`)) || s.JSON != nil {
-					t.Fatalf("expected path: %+v", s)
-				}
-			} else if string(s.JSON) != tt.json || s.BaseURI != directoryURI(root) {
-				t.Fatalf("expected inline JSON %q: %+v", tt.json, s)
-			}
-		})
-	}
-	for _, tt := range []struct {
-		name, value string
-		isPath      bool
-		json        string
-	}{
-		{"JSON false", " false ", false, "false"},
-		{"JSON true", "true", false, "true"},
-		{"JSON object", `{"type":"object"}`, false, `{"type":"object"}`},
-		{"boolean filename", "./false", true, ""},
-		{"array filename", "[schema]", true, ""},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			c, err := Parse([]string{"--input-schema", tt.value}, root)
+			c, err := Parse(args, root)
 			if err != nil {
 				t.Fatal(err)
 			}
 			s := c.InputSchema
-			if !s.Present {
-				t.Fatal("schema was not marked present")
+			if tt.yamlValue != "" {
+				s = c.OutputSchema
 			}
-			if tt.isPath {
-				if s.Path != filepath.Join(root, tt.value) || s.JSON != nil || s.BaseURI != "" {
-					t.Fatalf("expected schema path: %+v", s)
-				}
-			} else if string(s.JSON) != tt.json || s.BaseURI != directoryURI(root) {
-				t.Fatalf("expected inline JSON %q: %+v", tt.json, s)
+			want := SchemaSpec{Present: true}
+			if tt.path != "" {
+				want.Path = filepath.Join(root, tt.path)
+			} else {
+				want.JSON = []byte(tt.json)
+				want.BaseURI = directoryURI(root)
+			}
+			if !reflect.DeepEqual(s, want) {
+				t.Fatalf("schema = %+v, want %+v", s, want)
 			}
 		})
 	}
+	t.Run("large CLI schema numbers are not parsed as float64", func(t *testing.T) {
+		raw := `{"minimum":1e1000}`
+		c, err := Parse([]string{"--input-schema", raw}, root)
+		if err != nil || string(c.InputSchema.JSON) != raw {
+			t.Fatalf("lost number precision: %q, %v", c.InputSchema.JSON, err)
+		}
+	})
 }
 
 func TestParseRejectsInvalidOptions(t *testing.T) {
@@ -501,11 +484,12 @@ func TestParseRejectsInvalidFilesAndUTF8(t *testing.T) {
 			}
 		})
 	}
-	if _, err := Parse([]string{"--prompt", string([]byte{0xff})}, root); err == nil {
-		t.Fatal("invalid UTF-8 in CLI prompt was accepted")
-	}
-	if _, err := Parse([]string{"--output-schema", string([]byte{0xff})}, root); err == nil {
-		t.Fatal("invalid UTF-8 in CLI schema was accepted")
+	for _, option := range []string{"--prompt", "--output-schema"} {
+		t.Run("invalid UTF-8 in "+option, func(t *testing.T) {
+			if _, err := Parse([]string{option, string([]byte{0xff})}, root); err == nil {
+				t.Fatalf("invalid UTF-8 in %s was accepted", option)
+			}
+		})
 	}
 	if _, err := Parse([]string{"-h"}, root); !errors.Is(err, flag.ErrHelp) {
 		t.Fatalf("help should preserve flag.ErrHelp: %v", err)
