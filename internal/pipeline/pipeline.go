@@ -332,11 +332,14 @@ func (p *processor) runAuto() int {
 				p.reportAgentFailure(err, 0, "mode")
 				return 2
 			}
-			mode, _, err = parseModeResponse(response.Text)
+			var agentReason string
+			mode, agentReason, err = parseModeResponse(response.Text)
 			if err != nil {
 				p.diag.log(slog.LevelError, "invalid_mode_response", "mode", "Agent returned an invalid mode decision", 0)
 				return 2
 			}
+			p.diag.log(slog.LevelDebug, "mode_reason", "mode", "Agent processing mode rationale", 0,
+				"agent_mode", mode, "reason", agentReason)
 			switch mode {
 			case "reduce":
 				reason = "The agent determined cross-record context is required"
