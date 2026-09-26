@@ -90,7 +90,7 @@ func Run(ctx context.Context, cfg config.Config, in io.Reader, out, errOut io.Wr
 
 	switch cfg.Mode {
 	case "map":
-		status = p.runMap(nil)
+		status = p.mapMode(nil)
 	case "reduce":
 		status = p.runReduce(nil)
 	case "auto":
@@ -355,14 +355,17 @@ func (p *processor) runAuto() int {
 		}
 		if int64(len(line.data)) > p.cfg.MaxLineBytes {
 			p.reject("line_too_long", "input", "Input line exceeds the size limit")
-			return p.runMap(nil)
+			return p.mapMode(nil)
 		}
-		return p.runMap(&rec)
+		return p.mapMode(&rec)
 	}
 }
 
 func (p *processor) invoke(prompt string, nativeSchema []byte) (agent.Response, error) {
-	ctx := p.ctx
+	return p.invokeWithContext(p.ctx, prompt, nativeSchema)
+}
+
+func (p *processor) invokeWithContext(ctx context.Context, prompt string, nativeSchema []byte) (agent.Response, error) {
 	if p.cfg.Timeout != 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, p.cfg.Timeout)

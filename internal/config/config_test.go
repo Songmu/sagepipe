@@ -129,7 +129,7 @@ max_input_bytes: 128
 max_line_bytes: 256
 max_response_bytes: 512
 timeout: 2m
-concurrency: [invalid, but, ignored]
+custom_metadata: [invalid, but, ignored]
 ---
 
 Original prompt.
@@ -399,7 +399,19 @@ func TestParseRejectsInvalidOptions(t *testing.T) {
 		args        []string
 		want        string
 	}{
-		{"no concurrency flag", "", []string{"--concurrency", "2"}, "flag provided but not defined"},
+		{"negative concurrency file", "concurrency: -1", nil, "concurrency must be positive"},
+		{"zero concurrency file", "concurrency: 0", nil, "concurrency must be positive"},
+		{"fractional concurrency file", "concurrency: 1.5", nil, "concurrency: expected an integer"},
+		{"string concurrency file", `concurrency: "2"`, nil, "concurrency: expected an integer"},
+		{"concurrency overflow file", "concurrency: 9223372036854775808", nil, "concurrency: expected an integer"},
+		{"invalid concurrency file despite override", "concurrency: wrong", []string{"--concurrency", "2"}, "concurrency: expected an integer"},
+		{"zero concurrency flag", "", []string{"--concurrency=0"}, "concurrency must be positive"},
+		{"negative concurrency flag", "", []string{"--concurrency=-1"}, "concurrency must be positive"},
+		{"invalid concurrency flag", "", []string{"--concurrency=abc"}, "invalid value"},
+		{"reduce concurrency file", "mode: reduce\nconcurrency: 2", nil, "concurrency must be 1 in reduce mode"},
+		{"reduce concurrency flag", "mode: reduce", []string{"--concurrency=2"}, "concurrency must be 1 in reduce mode"},
+		{"reduce concurrency overridden", "mode: reduce\nconcurrency: 2", []string{"--concurrency=1"}, ""},
+		{"auto concurrency", "mode: auto\nconcurrency: 2", nil, ""},
 		{"positional", "", []string{"extra"}, "unexpected positional"},
 		{"unknown provider flag", "", []string{"--agent", "other"}, "unsupported provider"},
 		{"claude acp", "", []string{"--agent", "claude", "--protocol", "acp"}, "combination"},
@@ -483,6 +495,28 @@ func TestParseRejectsInvalidOptions(t *testing.T) {
 	}
 }
 
+func TestConcurrencyPrecedence(t *testing.T) {
+	root := t.TempDir()
+	writeConfig(t, filepath.Join(root, "config.md"), "---\nmode: map\nconcurrency: 4\n---\n")
+	for _, tt := range []struct {
+		args []string
+		want int
+	}{
+		{nil, 1},
+		{[]string{"--config", "config.md"}, 4},
+		{[]string{"--config", "config.md", "--concurrency", "2"}, 2},
+		{[]string{"--concurrency", "3"}, 3},
+	} {
+		c, err := Parse(tt.args, root)
+		if err != nil {
+			t.Fatalf("Parse(%q): %v", tt.args, err)
+		}
+		if c.Concurrency != tt.want {
+			t.Errorf("Parse(%q): concurrency = %d, want %d", tt.args, c.Concurrency, tt.want)
+		}
+	}
+}
+
 func TestParseRejectsInvalidFilesAndUTF8(t *testing.T) {
 	root := t.TempDir()
 	tests := []struct {
@@ -550,7 +584,7 @@ func TestUsage(t *testing.T) {
 			t.Errorf("usage omits %s: %s", name, usage)
 		}
 	}
-	for _, name := range []string{"--version", "--concurrency"} {
+	for _, name := range []string{"--version"} {
 		if strings.Contains(usage, name) {
 			t.Errorf("usage includes unsupported %s", name)
 		}

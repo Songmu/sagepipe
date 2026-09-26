@@ -67,9 +67,15 @@ records per line. `reduce` processes the valid input records together, also
 producing zero or more output records. In the default `auto` mode, a nonempty
 prompt and at least one valid input record cause one additional agent call to
 choose `map` or `reduce`; ambiguous transformations use `map`. Specify a mode
-to avoid this extra call and make the processing unit predictable. The initial
-release processes requests sequentially; it has no `--concurrency` flag. A
-`concurrency` frontmatter value is ignored like other unknown metadata.
+to avoid this extra call and make the processing unit predictable. Requests
+are processed sequentially by default. Set `concurrency` in
+frontmatter or pass `--concurrency N` to process up to N `map` records at once.
+Successful results remain in input order, even if later agent calls finish
+first. At most N records and their pending results are held before writing.
+Each call is independent; ACP uses separate connections for concurrent calls,
+while CLI agents use separate subprocesses. Explicit `reduce` mode rejects
+concurrency greater than 1. In `auto` mode, a `reduce` decision runs the
+single aggregate call sequentially even when concurrency is greater than 1.
 
 The agent must return a single JSON object of the form `{"items":[...]}`.
 sagepipe checks the entire answer and validates every item before writing
@@ -175,6 +181,7 @@ directory, while configuration-file `agent.cwd` remains configuration-relative.
 | --- | --- | --- |
 | `--agent`, `--protocol`, `--model` | `copilot`, agent's default protocol/model | Select an agent connection |
 | `--mode` | `auto` | Select `map`, `reduce`, or `auto` |
+| `--concurrency` | `1` | Maximum simultaneous `map` requests; positive integer |
 | `--input-schema`, `--output-schema` | None | Validate records and select JSONL on that side |
 | `--max-line-bytes` | 1,048,576 | Maximum raw input line in `map` |
 | `--max-input-bytes` | 65,536 | Maximum total raw input in `reduce` |

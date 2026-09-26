@@ -1,6 +1,7 @@
 package factory
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"math"
@@ -19,6 +20,48 @@ import (
 
 // New selects an adapter without starting a subprocess.
 func New(cfg config.Config) (agent.Runner, error) {
+	if cfg.Concurrency <= 1 {
+		return newSingle(cfg)
+	}
+	pool := &runnerPool{available: make(chan agent.Runner, cfg.Concurrency)}
+	for range cfg.Concurrency {
+		runner, err := newSingle(cfg)
+		if err != nil {
+			return nil, errors.Join(err, pool.Close())
+		}
+		pool.runners = append(pool.runners, runner)
+		pool.available <- runner
+	}
+	return pool, nil
+}
+
+type runnerPool struct {
+	runners   []agent.Runner
+	available chan agent.Runner
+}
+
+func (p *runnerPool) Run(ctx context.Context, req agent.Request) (agent.Response, error) {
+	if err := ctx.Err(); err != nil {
+		return agent.Response{}, err
+	}
+	select {
+	case runner := <-p.available:
+		defer func() { p.available <- runner }()
+		return runner.Run(ctx, req)
+	case <-ctx.Done():
+		return agent.Response{}, ctx.Err()
+	}
+}
+
+func (p *runnerPool) Close() error {
+	var errs []error
+	for _, runner := range p.runners {
+		errs = append(errs, runner.Close())
+	}
+	return errors.Join(errs...)
+}
+
+func newSingle(cfg config.Config) (agent.Runner, error) {
 	selected := cfg.Agent
 	switch selected.Protocol {
 	case "acp":
