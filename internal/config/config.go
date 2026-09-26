@@ -160,11 +160,15 @@ func Parse(argv []string, startupCWD string) (Config, error) {
 	set := make(map[string]bool)
 	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
 
-	c, err := loadConfig(startupCWD, opts, set)
+	cliCWD, err := cliWorkingDirectory(startupCWD, opts.directory, set)
 	if err != nil {
 		return empty, err
 	}
-	if err := applyOverrides(&c, startupCWD, opts, set); err != nil {
+	c, err := loadConfig(cliCWD, opts.configPath, set["config"], opts.verbosity)
+	if err != nil {
+		return empty, err
+	}
+	if err := applyOverrides(&c, cliCWD, opts, set); err != nil {
 		return empty, err
 	}
 	if err := validate(&c); err != nil {
@@ -173,37 +177,42 @@ func Parse(argv []string, startupCWD string) (Config, error) {
 	return c, nil
 }
 
-func loadConfig(startupCWD string, opts flagOptions, set map[string]bool) (Config, error) {
+func cliWorkingDirectory(startupCWD, directory string, set map[string]bool) (string, error) {
+	flagName := ""
+	if set["C"] {
+		flagName = "-C"
+	}
+	if set["cwd"] {
+		flagName = "--cwd"
+	}
+	if flagName == "" {
+		return startupCWD, nil
+	}
+	if err := validPath(directory, flagName); err != nil {
+		return "", err
+	}
+	cwd := resolve(startupCWD, directory)
+	if err := requireDirectory(cwd, flagName); err != nil {
+		return "", err
+	}
+	return cwd, nil
+}
+
+func loadConfig(cliCWD, configPath string, hasConfig bool, verbosity int) (Config, error) {
 	c := Config{
 		Agent:            AgentConfig{Provider: "copilot", Protocol: "acp"},
-		CWD:              startupCWD,
+		CWD:              cliCWD,
 		Mode:             "auto",
 		MaxInputBytes:    65536,
 		MaxLineBytes:     1048576,
 		MaxResponseBytes: 8388608,
-		Verbosity:        opts.verbosity,
+		Verbosity:        verbosity,
 	}
-	cwdFlag := ""
-	if set["C"] {
-		cwdFlag = "-C"
-	}
-	if set["cwd"] {
-		cwdFlag = "--cwd"
-	}
-	if cwdFlag != "" {
-		if err := validPath(opts.directory, cwdFlag); err != nil {
+	if hasConfig {
+		if err := validPath(configPath, "--config"); err != nil {
 			return Config{}, err
 		}
-		c.CWD = resolve(startupCWD, opts.directory)
-		if err := requireDirectory(c.CWD, cwdFlag); err != nil {
-			return Config{}, err
-		}
-	}
-	if set["config"] {
-		if err := validPath(opts.configPath, "--config"); err != nil {
-			return Config{}, err
-		}
-		path := resolve(c.CWD, opts.configPath)
+		path := resolve(cliCWD, configPath)
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return Config{}, fmt.Errorf("config %s: %w", path, err)
@@ -218,9 +227,9 @@ func loadConfig(startupCWD string, opts flagOptions, set map[string]bool) (Confi
 	return c, nil
 }
 
-func applyOverrides(c *Config, startupCWD string, opts flagOptions, set map[string]bool) error {
+func applyOverrides(c *Config, cliCWD string, opts flagOptions, set map[string]bool) error {
 	if set["C"] || set["cwd"] {
-		c.CWD = resolve(startupCWD, opts.directory)
+		c.CWD = cliCWD
 	}
 	if set["agent"] {
 		if !builtin(opts.agent) {

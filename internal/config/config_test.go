@@ -227,6 +227,27 @@ Original prompt.
 			t.Fatalf("--cwd should set cwd and the inherited agent cwd: %+v", c)
 		}
 	})
+	t.Run("last CLI cwd locates config and overrides file cwd", func(t *testing.T) {
+		for _, tc := range []struct {
+			name string
+			args []string
+			want string
+		}{
+			{"last short flag", []string{"--cwd", "project", "-C", "."}, root},
+			{"last long flag", []string{"-C", ".", "--cwd", "project"}, project},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				writeConfig(t, filepath.Join(tc.want, "cwd.md"), "---\ncwd: ./missing\n---\n")
+				c, err := Parse(append(tc.args, "--config", "cwd.md"), root)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if c.CWD != tc.want || c.Agent.CWD != tc.want {
+					t.Fatalf("CLI cwd should locate the file and override its cwd: %+v", c)
+				}
+			})
+		}
+	})
 	t.Run("file URI escapes directory names", func(t *testing.T) {
 		base := directoryURI(configDir)
 		u, err := url.Parse(base)
