@@ -238,7 +238,7 @@ func (p *processor) processMap(rec record) error {
 	payload, count, err := p.parseOutput(resp)
 	if err != nil {
 		p.failures++
-		p.diag.log(slog.LevelError, "invalid_response", "output", "Agent response is not valid output", rec.line)
+		p.reportInvalidResponse(err, resp, rec.line)
 		return nil
 	}
 	if err := p.emit(payload, count); err != nil {
@@ -298,7 +298,7 @@ func (p *processor) runReduce(first *record) int {
 	}
 	payload, count, err := p.parseOutput(resp)
 	if err != nil {
-		p.diag.log(slog.LevelError, "invalid_response", "output", "Agent response is not valid output", 0)
+		p.reportInvalidResponse(err, resp, 0)
 		return 2
 	}
 	if err := p.emit(payload, count); err != nil {
@@ -336,6 +336,10 @@ func (p *processor) runAuto() int {
 			mode, agentReason, err = parseModeResponse(response.Text)
 			if err != nil {
 				p.diag.log(slog.LevelError, "invalid_mode_response", "mode", "Agent returned an invalid mode decision", 0)
+				text, truncated := diagnosticResponse(response.Text)
+				p.diag.log(slog.LevelDebug, "invalid_mode_response_detail", "mode",
+					"Agent mode response validation failed", 0, "reason", err.Error(), "response", text,
+					"response_bytes", len(response.Text), "response_truncated", truncated)
 				return 2
 			}
 			p.diag.log(slog.LevelDebug, "mode_reason", "mode", "Agent processing mode rationale", 0,
@@ -410,6 +414,7 @@ func (p *processor) reportAgentFailure(err error, line int, stage string) {
 		code, message = "agent_cancelled", "Agent request was cancelled"
 	}
 	p.diag.log(slog.LevelError, code, stage, message, line)
+	p.diag.log(slog.LevelDebug, code+"_detail", stage, "Agent request failure detail", line, "reason", err.Error())
 }
 
 func (p *processor) reportInputFailure(err error) {
