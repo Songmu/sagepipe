@@ -51,7 +51,7 @@ func TestParseDefaultsAndPrompt(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if c.CWD != root || !reflect.DeepEqual(c.Agent, AgentConfig{Provider: "copilot", Protocol: "acp", CWD: root}) ||
+			if c.CWD != root || !reflect.DeepEqual(c.Agent, AgentConfig{Provider: "copilot", Protocol: "cli", CWD: root}) ||
 				c.Mode != "auto" || c.Prompt != tt.wantPrompt || c.AllowedTools != "" ||
 				c.InputSchema.Present || c.OutputSchema.Present || c.Timeout != 0 ||
 				c.Verbosity != 0 ||
@@ -333,6 +333,17 @@ agent:
 	copilotCLI, err := Parse([]string{"--agent", "copilot", "--protocol", "cli"}, root)
 	if err != nil || copilotCLI.Agent.Protocol != "cli" {
 		t.Fatalf("explicit Copilot CLI: %+v, %v", copilotCLI.Agent, err)
+	}
+	copilotACP, err := Parse([]string{"--agent", "copilot", "--protocol", "acp"}, root)
+	if err != nil || copilotACP.Agent.Protocol != "acp" {
+		t.Fatalf("explicit Copilot ACP: %+v, %v", copilotACP.Agent, err)
+	}
+	for _, front := range []string{"agent: copilot", "agent: {provider: copilot}"} {
+		writeConfig(t, filepath.Join(root, "copilot.md"), "---\n"+front+"\n---\n")
+		copilotDefault, err := Parse([]string{"--config", "copilot.md"}, root)
+		if err != nil || copilotDefault.Agent.Protocol != "cli" {
+			t.Fatalf("default Copilot protocol for %q: %+v, %v", front, copilotDefault.Agent, err)
+		}
 	}
 }
 

@@ -113,10 +113,10 @@ underlying error at DEBUG level.
 
 ## Agents and permissions
 
-`copilot` defaults to ACP; `claude` and `codex` use their respective
-non-interactive CLIs. Install and authenticate the selected agent
-separately. Copilot can instead use its CLI with `--protocol cli`. There is
-no automatic fallback between agents or protocols. `agent.args` adds
+`copilot`, `claude`, and `codex` default to their respective non-interactive
+CLIs. Install and authenticate the selected agent separately. Copilot's
+experimental ACP connection remains available with `--protocol acp`. There
+is no automatic fallback between agents or protocols. `agent.args` adds
 arguments before sagepipe's required launch arguments for built-in agents:
 
 ```yaml
