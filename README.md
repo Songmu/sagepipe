@@ -117,6 +117,22 @@ diagnostic with each subprocess command, raw arguments, and working directory.
 These arguments may contain prompts, schemas, tool rules, or credentials; they
 are omitted by default and are not redacted in verbose diagnostics.
 
+> [!WARNING]
+> Enable verbose diagnostics only in trusted environments. Prefer environment
+> variables or protected files over command-line arguments for sensitive data.
+> Before running with `--verbose` in CI, register every sensitive value with the
+> CI system's log-masking mechanism. In GitHub Actions, emit
+> `::add-mask::{value}` before any command can print that value:
+>
+> ```yaml
+> - name: Mask generated credentials
+>   run: |
+>     echo "::add-mask::$MCP_CREDENTIAL"
+> ```
+>
+> Register masks before invoking sagepipe and repeat this for each sensitive
+> value in every job where verbose diagnostics may be captured.
+
 `allowed-tools` is a top-level, space-separated YAML frontmatter value
 compatible in spelling with Agent Skills. It is passed through the
 selected agent's native tool mechanism, not enforced as a portable sandbox:
