@@ -6,15 +6,12 @@ import (
 	"io"
 	"log/slog"
 	"sync"
-
-	"github.com/Songmu/sagepipe/internal/agent"
 )
 
 type mapResult struct {
-	index int
-	line  int
-	resp  agent.Response
-	err   error
+	index     int
+	line      int
+	transform transformResult
 }
 
 func (p *processor) mapMode(first *record) int {
@@ -56,8 +53,8 @@ func (p *processor) runMapConcurrent(first *record) int {
 		workers.Add(1)
 		go func() {
 			defer workers.Done()
-			resp, err := p.invokeWithContext(ctx, prompt, nativeSchema)
-			results <- mapResult{index: index, line: rec.line, resp: resp, err: err}
+			result := p.transformWithRetry(ctx, prompt, nativeSchema, rec.line)
+			results <- mapResult{index: index, line: rec.line, transform: result}
 		}()
 		return true
 	}
@@ -117,21 +114,20 @@ func (p *processor) runMapConcurrent(first *record) int {
 				delete(ready, emitIndex)
 				delete(pending, emitIndex)
 				emitIndex++
-				if current.err != nil {
+				if current.transform.agentErr != nil {
 					p.failures++
-					p.reportAgentFailure(current.err, current.line, "agent")
+					p.reportAgentFailure(current.transform.agentErr, current.line, "agent")
 					if p.ctx.Err() != nil {
 						return 2
 					}
 					continue
 				}
-				payload, count, err := p.parseOutput(current.resp, current.line)
-				if err != nil {
+				if current.transform.outputErr != nil {
 					p.failures++
-					p.reportInvalidResponse(err, current.resp, current.line)
+					p.reportInvalidResponse(current.transform.outputErr, current.transform.response, current.line)
 					continue
 				}
-				if err := p.emit(payload, count); err != nil {
+				if err := p.emit(current.transform.payload, current.transform.count); err != nil {
 					return 2
 				}
 			}

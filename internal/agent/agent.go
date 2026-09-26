@@ -1,6 +1,12 @@
 package agent
 
-import "context"
+import (
+	"context"
+	"errors"
+)
+
+// ErrNoTextResponse indicates that an agent completed without returning text.
+var ErrNoTextResponse = errors.New("agent returned no text response")
 
 // Request is one independent agent invocation. Prompt contains all fallback
 // format instructions; NativeSchema is only an optional generation hint.

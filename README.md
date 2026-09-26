@@ -87,6 +87,14 @@ warning; surrounding prose remains invalid. For `reduce`, invalid input rows
 are excluded but still count as failures; a failed aggregate call produces no
 aggregate output.
 
+Each agent request is retried at most twice after an empty response. Incomplete
+JSON is retried with a repair request, while other responses that cannot be
+decoded as JSON are retried with a format-correction request. Both requests
+contain the original request, invalid response, and validation error as
+JSON-encoded data. Complete JSON that violates the response envelope or
+`output_schema` is not retried. Retry attempts produce `agent_retry` warnings,
+and the final summary includes `retries` and `recovered` counts.
+
 Exit status is `0` on success, `1` after completing input with rejected
 records, and `2` for failures that prevent completing the run. Standard
 error contains JSONL diagnostics with `level`, `code`, `stage`, and `message`;
@@ -202,8 +210,10 @@ directory, while configuration-file `agent.cwd` remains configuration-relative.
 
 Limits can also be set in frontmatter as `max_line_bytes`,
 `max_input_bytes`, `max_response_bytes`, and `timeout`. An oversized
-`reduce` input fails instead of being truncated or split. There are no
-automatic agent retries; tools may have side effects.
+`reduce` input fails instead of being truncated or split. Empty responses and
+responses that cannot be decoded as JSON may cause up to two automatic retries.
+If tools are enabled, a retry can repeat tool side effects from the failed
+request; configure tool access accordingly.
 Ctrl-C (and SIGTERM on Unix) cancels processing and attempts to close standard
 input to release a pending read. The run reports a JSONL cancellation diagnostic
 and exits with status 2 after agent cleanup. On Unix, CLI and ACP agent

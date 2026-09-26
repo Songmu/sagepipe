@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"unicode/utf8"
@@ -107,7 +108,10 @@ func (r *Runner) Run(ctx context.Context, req agent.Request) (response agent.Res
 	if err != nil {
 		return agent.Response{}, err
 	}
-	if !seenMessage || !completed {
+	if completed && !seenMessage {
+		return agent.Response{}, fmt.Errorf("codex CLI: %w", agent.ErrNoTextResponse)
+	}
+	if !completed {
 		return agent.Response{}, errors.New("codex CLI: missing final answer or completion event")
 	}
 	if err = cli.CheckResponseLimit(final, req.MaxResponseBytes); err != nil {
