@@ -39,7 +39,7 @@ type Config struct {
 	InputSchema, OutputSchema                     SchemaSpec
 	MaxInputBytes, MaxLineBytes, MaxResponseBytes int64
 	Timeout                                       time.Duration
-	Verbosity                                     int
+	Concurrency, Verbosity                        int
 }
 
 type flagOptions struct {
@@ -47,7 +47,7 @@ type flagOptions struct {
 	mode, prompt, allowedTools, inputSchema, outputSchema   string
 	timeout                                                 string
 	maxInputBytes, maxLineBytes, maxResponseBytes           int64
-	verbosity                                               int
+	concurrency, verbosity                                  int
 	help                                                    bool
 }
 
@@ -89,6 +89,7 @@ func newFlagSet(o *flagOptions) *flag.FlagSet {
 	fs.StringVar(&o.model, "model", "", "agent model")
 	fs.StringVar(&o.agentCWD, "agent-cwd", "", "agent working directory")
 	fs.StringVar(&o.mode, "mode", "", "map, reduce, or auto")
+	fs.IntVar(&o.concurrency, "concurrency", 0, "maximum concurrent map requests")
 	fs.StringVar(&o.prompt, "prompt", "", "transformation prompt")
 	fs.StringVar(&o.allowedTools, "allowed-tools", "", "agent tools")
 	fs.StringVar(&o.inputSchema, "input-schema", "", "input schema")
@@ -203,6 +204,7 @@ func loadConfig(cliCWD, configPath string, hasConfig bool, verbosity int) (Confi
 		Agent:            AgentConfig{Provider: "copilot", Protocol: "acp"},
 		CWD:              cliCWD,
 		Mode:             "auto",
+		Concurrency:      1,
 		MaxInputBytes:    65536,
 		MaxLineBytes:     1048576,
 		MaxResponseBytes: 8388608,
@@ -257,6 +259,9 @@ func applyOverrides(c *Config, cliCWD string, opts flagOptions, set map[string]b
 	}
 	if set["mode"] {
 		c.Mode = opts.mode
+	}
+	if set["concurrency"] {
+		c.Concurrency = opts.concurrency
 	}
 	if set["prompt"] {
 		c.Prompt = opts.prompt
@@ -335,6 +340,14 @@ func parseFile(c *Config, data []byte, dir string) error {
 			return fmt.Errorf("mode: unsupported value %q", v)
 		}
 		c.Mode = v
+	}
+	if raw, ok := fields["concurrency"]; ok {
+		if err := decodeYAML(raw, &c.Concurrency); err != nil {
+			return fmt.Errorf("concurrency: expected an integer: %w", err)
+		}
+		if c.Concurrency <= 0 {
+			return errors.New("concurrency must be positive")
+		}
 	}
 	if v, ok, err := stringField(fields, "allowed-tools"); err != nil {
 		return err
@@ -529,6 +542,12 @@ func validate(c *Config) error {
 	}
 	if !validMode(c.Mode) {
 		return fmt.Errorf("mode: unsupported value %q", c.Mode)
+	}
+	if c.Concurrency <= 0 {
+		return errors.New("concurrency must be positive")
+	}
+	if c.Mode == "reduce" && c.Concurrency != 1 {
+		return errors.New("concurrency must be 1 in reduce mode")
 	}
 	for _, entry := range []struct {
 		name  string
