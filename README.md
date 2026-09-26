@@ -90,9 +90,7 @@ agent:
   args: [acp]
 ```
 
-Install and authenticate OpenCode separately before running sagepipe. OpenCode
-loads its normal project configuration, including model and permission
-settings. Generic ACP agents do not support sagepipe's `allowed-tools` option;
+Generic ACP agents do not support sagepipe's `allowed-tools` option;
 configure tool permissions in OpenCode instead.
 
 `allowed-tools` is a top-level, space-separated YAML frontmatter value
