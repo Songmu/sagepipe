@@ -8,7 +8,7 @@ runs:
     - name: Install sagepipe
       shell: bash
       run: |
-        version="v0.0.1"
+        version="v0.0.2"
         bindir="${RUNNER_TEMP%/}/sagepipe/bin"
 
         sh "${GITHUB_ACTION_PATH}/install.sh" \

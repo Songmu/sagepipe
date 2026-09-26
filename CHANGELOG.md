@@ -1,5 +1,9 @@
 # Changelog
 
+## [v0.0.2](https://github.com/Songmu/sagepipe/compare/v0.0.1...v0.0.2) - 2026-09-26
+
+- Add -i/--ignore-failures for successful partial output by @Songmu in https://github.com/Songmu/sagepipe/pull/31
+
 ## [v0.0.1](https://github.com/Songmu/sagepipe/commits/v0.0.1) - 2026-09-26
 
 - Bump reviewdog/action-misspell from 1.27.0 to 1.30.1 by @dependabot[bot] in https://github.com/Songmu/sagepipe/pull/5
