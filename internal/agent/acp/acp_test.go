@@ -145,7 +145,10 @@ func (m *mockAgent) NewSession(_ context.Context, p sdk.NewSessionRequest) (sdk.
 		return sdk.NewSessionResponse{}, errors.New("session was not isolated or working directory differs")
 	}
 	m.sessions++
-	values := sdk.SessionConfigSelectOptionsUngrouped{{Name: "test-model", Value: "test-model"}}
+	values := sdk.SessionConfigSelectOptionsUngrouped{
+		{Name: "Default Model", Value: "default"},
+		{Name: "Test Model", Value: "test-model"},
+	}
 	category := sdk.SessionConfigOptionCategoryModel
 	return sdk.NewSessionResponse{
 		SessionId: sdk.SessionId(fmt.Sprintf("session-%d", m.sessions)),
@@ -438,6 +441,11 @@ func TestRunUsesIndependentSessionsAndDeniesPermission(t *testing.T) {
 		if res.Usage == nil || *res.Usage != (agent.Usage{InputTokens: 11, OutputTokens: 7, CachedInputTokens: 3}) {
 			t.Fatalf("usage = %+v", res.Usage)
 		}
+		if res.Model == nil || *res.Model != (agent.Model{
+			ID: "test-model", Name: "Test Model", Source: agent.ModelSourceExplicit,
+		}) {
+			t.Fatalf("model = %+v", res.Model)
+		}
 		if !reflect.DeepEqual(res.Warnings, []string{"ACP does not support native output schemas; validate the response locally"}) {
 			t.Fatalf("warnings = %v", res.Warnings)
 		}
@@ -456,6 +464,23 @@ func TestRunUsesIndependentSessionsAndDeniesPermission(t *testing.T) {
 	}
 	if _, err := r.Run(context.Background(), agent.Request{Prompt: "hello"}); err == nil {
 		t.Fatal("Run succeeded after Close")
+	}
+}
+
+func TestRunReportsDefaultSessionModel(t *testing.T) {
+	r, err := New(mockOptions(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	res, err := r.Run(context.Background(), agent.Request{Prompt: "hello"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Model == nil || *res.Model != (agent.Model{
+		ID: "default", Name: "Default Model", Source: agent.ModelSourceSessionConfig,
+	}) {
+		t.Fatalf("model = %+v", res.Model)
 	}
 }
 

@@ -101,6 +101,12 @@ error contains JSONL diagnostics with `level`, `code`, `stage`, and `message`;
 input-specific diagnostics also include the one-based physical `line`.
 By default, only WARN and ERROR diagnostics are emitted. `-v` adds INFO
 diagnostics; `-vv` (or repeating `--verbose`) also adds DEBUG diagnostics.
+When available, INFO `agent_usage` diagnostics include `model`, `model_source`,
+and a human-readable `model_name`; agents without usage data emit an
+`agent_model` diagnostic instead. Explicit selections use the `model_source`
+value `explicit`, while ACP defaults discovered from session configuration use
+`session_config`. Unreported default models are not inferred from agent
+response text.
 For invalid agent output, DEBUG diagnostics include the validation reason and
 up to 4096 bytes of the raw response. Agent call failures similarly include the
 underlying error at DEBUG level.

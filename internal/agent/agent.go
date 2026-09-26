@@ -41,9 +41,22 @@ type Usage struct {
 	CachedInputTokens int64
 }
 
+// Model identifies the model selected for an agent response.
+type Model struct {
+	ID     string
+	Name   string
+	Source string
+}
+
+const (
+	ModelSourceExplicit      = "explicit"
+	ModelSourceSessionConfig = "session_config"
+)
+
 // Response contains only the agent's final answer, never protocol events.
 type Response struct {
 	Text     string
+	Model    *Model
 	Usage    *Usage
 	Warnings []string
 }

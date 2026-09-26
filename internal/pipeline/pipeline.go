@@ -392,15 +392,44 @@ func (p *processor) invokeWithContext(ctx context.Context, prompt string, native
 	if !utf8.ValidString(resp.Text) || int64(len(resp.Text)) > p.cfg.MaxResponseBytes {
 		return agent.Response{}, fmt.Errorf("agent response exceeds size limit or is not UTF-8")
 	}
+	model := p.responseModel(resp.Model)
 	if resp.Usage != nil {
-		p.diag.log(slog.LevelInfo, "agent_usage", "agent", "Agent usage reported", 0,
+		args := []any{
 			"input_tokens", resp.Usage.InputTokens, "output_tokens", resp.Usage.OutputTokens,
-			"cached_input_tokens", resp.Usage.CachedInputTokens)
+			"cached_input_tokens", resp.Usage.CachedInputTokens,
+		}
+		args = appendModel(args, model)
+		p.diag.log(slog.LevelInfo, "agent_usage", "agent", "Agent usage reported", 0, args...)
+	} else if model != nil {
+		p.diag.log(slog.LevelInfo, "agent_model", "agent", "Agent model reported", 0,
+			appendModel(nil, model)...)
 	}
 	for _, warning := range resp.Warnings {
 		p.diag.log(slog.LevelWarn, "agent_warning", "agent", warning, 0)
 	}
 	return resp, nil
+}
+
+func (p *processor) responseModel(reported *agent.Model) *agent.Model {
+	if p.cfg.Agent.Model == "" {
+		return reported
+	}
+	model := &agent.Model{ID: p.cfg.Agent.Model, Source: agent.ModelSourceExplicit}
+	if reported != nil && reported.ID == model.ID {
+		model.Name = reported.Name
+	}
+	return model
+}
+
+func appendModel(args []any, model *agent.Model) []any {
+	if model == nil || model.ID == "" {
+		return args
+	}
+	args = append(args, "model", model.ID, "model_source", model.Source)
+	if model.Name != "" {
+		args = append(args, "model_name", model.Name)
+	}
+	return args
 }
 
 func (p *processor) reportAgentFailure(err error, line int, stage string) {

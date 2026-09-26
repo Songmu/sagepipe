@@ -442,7 +442,10 @@ func TestDiagnosticsVerbosityLevels(t *testing.T) {
 			f := &fakeRunner{run: func(req agent.Request) (agent.Response, error) {
 				req.OnLaunch(agent.NewLaunch("agent", []string{"private-token"}, "/tmp"))
 				return agent.Response{
-					Text:     `{"items":["ok"]}`,
+					Text: `{"items":["ok"]}`,
+					Model: &agent.Model{
+						ID: "test-model", Name: "Test Model", Source: agent.ModelSourceSessionConfig,
+					},
 					Usage:    &agent.Usage{InputTokens: 2},
 					Warnings: []string{"agent warning"},
 				}, nil
@@ -468,7 +471,60 @@ func TestDiagnosticsVerbosityLevels(t *testing.T) {
 			if !strings.Contains(diag.String(), `"level":"WARN"`) {
 				t.Errorf("WARN missing: %s", diag.String())
 			}
+			for _, want := range []string{
+				`"model":"test-model"`,
+				`"model_name":"Test Model"`,
+				`"model_source":"session_config"`,
+			} {
+				if strings.Contains(diag.String(), want) != tt.wantInfo {
+					t.Errorf("model metadata exposure mismatch for %q: %s", want, diag.String())
+				}
+			}
 		})
+	}
+}
+
+func TestModelDiagnosticWithoutUsage(t *testing.T) {
+	cfg := testConfig("map")
+	cfg.Verbosity = 1
+	var out, diag strings.Builder
+	f := &fakeRunner{run: func(agent.Request) (agent.Response, error) {
+		return agent.Response{
+			Text:  `{"items":["ok"]}`,
+			Model: &agent.Model{ID: "explicit-model", Source: agent.ModelSourceExplicit},
+		}, nil
+	}}
+	if code := Run(context.Background(), cfg, strings.NewReader("input\n"), &out, &diag, f); code != 0 {
+		t.Fatalf("exit code = %d, diagnostics: %s", code, diag.String())
+	}
+	checkDiagnostic(t, diag.String(), "agent_model", 0)
+	if !strings.Contains(diag.String(), `"model":"explicit-model"`) ||
+		!strings.Contains(diag.String(), `"model_source":"explicit"`) {
+		t.Fatalf("model diagnostic missing metadata: %s", diag.String())
+	}
+}
+
+func TestExplicitConfiguredModelOverridesReportedSource(t *testing.T) {
+	cfg := testConfig("map")
+	cfg.Verbosity = 1
+	cfg.Agent.Model = "configured-model"
+	var out, diag strings.Builder
+	f := &fakeRunner{run: func(agent.Request) (agent.Response, error) {
+		return agent.Response{
+			Text: `{"items":["ok"]}`,
+			Model: &agent.Model{
+				ID: "configured-model", Name: "Configured Model", Source: agent.ModelSourceSessionConfig,
+			},
+			Usage: &agent.Usage{InputTokens: 1},
+		}, nil
+	}}
+	if code := Run(context.Background(), cfg, strings.NewReader("input\n"), &out, &diag, f); code != 0 {
+		t.Fatalf("exit code = %d, diagnostics: %s", code, diag.String())
+	}
+	if !strings.Contains(diag.String(), `"model":"configured-model"`) ||
+		!strings.Contains(diag.String(), `"model_name":"Configured Model"`) ||
+		!strings.Contains(diag.String(), `"model_source":"explicit"`) {
+		t.Fatalf("explicit model was not preferred: %s", diag.String())
 	}
 }
 

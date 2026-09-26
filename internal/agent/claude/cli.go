@@ -27,6 +27,9 @@ func New(options cli.Options) (*Runner, error) {
 
 func (r *Runner) Run(ctx context.Context, req agent.Request) (agent.Response, error) {
 	var response agent.Response
+	if r.options.Model != "" {
+		response.Model = &agent.Model{ID: r.options.Model, Source: agent.ModelSourceExplicit}
+	}
 	args := append([]string(nil), r.options.Args...)
 	args = append(args, "-p", "--output-format=json")
 	if r.options.Model != "" {
