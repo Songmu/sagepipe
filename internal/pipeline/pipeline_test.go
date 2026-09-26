@@ -209,6 +209,24 @@ func TestMarkdownFenceWithSurroundingProseRemainsInvalid(t *testing.T) {
 	checkDiagnostic(t, diag.String(), "invalid_response", 1)
 }
 
+func TestMarkdownFencePreservesInvalidPayloadWhitespace(t *testing.T) {
+	cfg := testConfig("map")
+	cfg.Verbosity = 2
+	response := "```json\n\u00a0{\"items\":[\"ok\"]}\n```"
+	var out, diag strings.Builder
+	f := &fakeRunner{run: func(agent.Request) (agent.Response, error) {
+		return agent.Response{Text: response}, nil
+	}}
+	if code := Run(context.Background(), cfg, strings.NewReader("input\n"), &out, &diag, f); code != 1 {
+		t.Fatalf("exit code = %d, diagnostics: %s", code, diag.String())
+	}
+	if out.Len() != 0 {
+		t.Fatalf("invalid payload was accepted: %q", out.String())
+	}
+	checkDiagnostic(t, diag.String(), "markdown_fence_removed", 1)
+	checkDiagnostic(t, diag.String(), "invalid_response", 1)
+}
+
 func TestAgentFailureDetailsAreDebugOnly(t *testing.T) {
 	for _, tt := range []struct {
 		name      string
@@ -521,6 +539,32 @@ func TestAutoClassifiesBeforeTransform(t *testing.T) {
 		t.Errorf("stdout=%q calls=%d", out.String(), len(f.calls))
 	}
 	checkDiagnostic(t, diag.String(), "mode_selected", 0)
+}
+
+func TestAutoRemovesModeResponseMarkdownFence(t *testing.T) {
+	cfg := testConfig("auto")
+	cfg.Prompt = "Translate each record"
+	var out, diag strings.Builder
+	f := &fakeRunner{}
+	f.run = func(req agent.Request) (agent.Response, error) {
+		if len(f.calls) == 1 {
+			if !strings.Contains(req.Prompt, "exactly one raw JSON object and no Markdown code fence") {
+				t.Errorf("mode prompt does not require raw JSON: %s", req.Prompt)
+			}
+			return agent.Response{Text: "```json\n{\"mode\":\"map\",\"reason\":\"independent\"}\n```"}, nil
+		}
+		return agent.Response{Text: `{"items":["translated"]}`}, nil
+	}
+	if code := Run(context.Background(), cfg, strings.NewReader("input\n"), &out, &diag, f); code != 0 {
+		t.Fatalf("exit code = %d, diagnostics: %s", code, diag.String())
+	}
+	if out.String() != "translated\n" || len(f.calls) != 2 {
+		t.Errorf("output=%q calls=%d", out.String(), len(f.calls))
+	}
+	checkDiagnostic(t, diag.String(), "markdown_fence_removed", 0)
+	if !strings.Contains(diag.String(), `"stage":"mode"`) {
+		t.Errorf("mode warning missing: %s", diag.String())
+	}
 }
 
 func TestAutoDoesNotLogAgentReasonContainingPrompt(t *testing.T) {

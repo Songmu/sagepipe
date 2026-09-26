@@ -46,7 +46,8 @@ func modePrompt(instructions string) string {
 	return "Choose whether the following transformation can process each input line independently. " +
 		"Choose reduce only if comparison, deduplication, summarization, or other cross-line context is clearly necessary; " +
 		"choose map if uncertain. Do not request any input data. " +
-		"Reply with exactly one JSON object: {\"mode\":\"map\"|\"reduce\"|\"uncertain\",\"reason\":\"...\"}.\n" +
+		"Reply with exactly one raw JSON object and no Markdown code fence: " +
+		"{\"mode\":\"map\"|\"reduce\"|\"uncertain\",\"reason\":\"...\"}.\n" +
 		"Transformation instructions:\n" + instructions
 }
 
@@ -147,7 +148,7 @@ func unwrapJSONCodeFence(text string) (string, bool) {
 	if lastNewline < 0 || strings.TrimSpace(rest[lastNewline+1:]) != "```" {
 		return text, false
 	}
-	return strings.TrimSpace(rest[:lastNewline]), true
+	return rest[:lastNewline], true
 }
 
 func (p *processor) reportInvalidResponse(err error, response agent.Response, line int) {

@@ -333,7 +333,12 @@ func (p *processor) runAuto() int {
 				return 2
 			}
 			var agentReason string
-			mode, agentReason, err = parseModeResponse(response.Text)
+			modeResponse, unwrapped := unwrapJSONCodeFence(response.Text)
+			if unwrapped {
+				p.diag.log(slog.LevelWarn, "markdown_fence_removed", "mode",
+					"Removed Markdown code fence from agent response", 0)
+			}
+			mode, agentReason, err = parseModeResponse(modeResponse)
 			if err != nil {
 				p.diag.log(slog.LevelError, "invalid_mode_response", "mode", "Agent returned an invalid mode decision", 0)
 				text, truncated := diagnosticResponse(response.Text)
