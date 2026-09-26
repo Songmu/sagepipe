@@ -34,12 +34,7 @@ input_schema:
   properties:
     name:
       type: string
-output_schema:
-  type: object
-  required: [category]
-  properties:
-    category:
-      type: string
+output_schema: ./schemas/output.json
 ---
 
 Classify each input name. Do not invent names.
@@ -48,6 +43,10 @@ Classify each input name. Do not invent names.
 ```console
 cat input.jsonl | sagepipe --config config.md > output.jsonl
 ```
+
+Here `input_schema` is inline, while `output_schema` loads a JSON Schema file.
+Either setting can use either form; file paths are relative to the Markdown
+configuration file.
 
 `--config` is optional; `--prompt` overrides the entire Markdown body, including
 when passed an empty string. Without an explicit prompt, an empty prompt is
