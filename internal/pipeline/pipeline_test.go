@@ -69,6 +69,7 @@ func TestMapRejectsWholeInvalidAnswerAndContinues(t *testing.T) {
 
 func TestDiagnosticsDoNotEchoToolRules(t *testing.T) {
 	cfg := testConfig("map")
+	cfg.Verbosity = 1
 	cfg.AllowedTools = "Bash(echo private-pattern)"
 	var out, diag strings.Builder
 	f := &fakeRunner{run: func(agent.Request) (agent.Response, error) {
@@ -80,6 +81,55 @@ func TestDiagnosticsDoNotEchoToolRules(t *testing.T) {
 	checkDiagnostic(t, diag.String(), "tools_selected", 0)
 	if strings.Contains(diag.String(), "private-pattern") {
 		t.Fatalf("diagnostics exposed tool rule: %s", diag.String())
+	}
+}
+
+func TestDiagnosticsVerbosityLevels(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		verbosity int
+		wantInfo  bool
+		wantDebug bool
+	}{
+		{"default", 0, false, false},
+		{"info", 1, true, false},
+		{"debug", 2, true, true},
+		{"higher verbosity", 3, true, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := testConfig("map")
+			cfg.Verbosity = tt.verbosity
+			var out, diag strings.Builder
+			f := &fakeRunner{run: func(req agent.Request) (agent.Response, error) {
+				req.OnLaunch(agent.NewLaunch("agent", []string{"private-token"}, "/tmp"))
+				return agent.Response{
+					Text:     `{"items":["ok"]}`,
+					Usage:    &agent.Usage{InputTokens: 2},
+					Warnings: []string{"agent warning"},
+				}, nil
+			}}
+			if code := Run(context.Background(), cfg, strings.NewReader("input\n"), &out, &diag, f); code != 0 {
+				t.Fatalf("exit code = %d, diagnostics: %s", code, diag.String())
+			}
+			if out.String() != "ok\n" {
+				t.Fatalf("stdout = %q", out.String())
+			}
+			for _, code := range []string{"agent_selected", "agent_usage", "summary"} {
+				if got := strings.Contains(diag.String(), `"code":"`+code+`"`); got != tt.wantInfo {
+					t.Errorf("%s present = %t, want %t: %s", code, got, tt.wantInfo, diag.String())
+				}
+			}
+			if got := strings.Contains(diag.String(), `"code":"agent_process_starting"`); got != tt.wantDebug {
+				t.Errorf("DEBUG present = %t, want %t: %s", got, tt.wantDebug, diag.String())
+			}
+			if strings.Contains(diag.String(), "private-token") != tt.wantDebug {
+				t.Errorf("launch arguments leaked or missing: %s", diag.String())
+			}
+			checkDiagnostic(t, diag.String(), "agent_warning", 0)
+			if !strings.Contains(diag.String(), `"level":"WARN"`) {
+				t.Errorf("WARN missing: %s", diag.String())
+			}
+		})
 	}
 }
 
@@ -114,7 +164,7 @@ func TestDiagnosticsHideLaunchArgumentsByDefault(t *testing.T) {
 
 func TestVerboseDiagnosticsLogRawLaunchArguments(t *testing.T) {
 	cfg := testConfig("map")
-	cfg.Verbose = true
+	cfg.Verbosity = 2
 	var out, diag strings.Builder
 	f := &fakeRunner{run: func(req agent.Request) (agent.Response, error) {
 		req.OnLaunch(agent.NewLaunch(
@@ -282,6 +332,7 @@ func TestJSONLBlankLineOverMapLimitIsIgnored(t *testing.T) {
 
 func TestAutoClassifiesBeforeTransform(t *testing.T) {
 	cfg := testConfig("auto")
+	cfg.Verbosity = 1
 	cfg.Prompt = "Summarize all lines"
 	var out, diag strings.Builder
 	f := &fakeRunner{}
