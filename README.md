@@ -112,9 +112,10 @@ agent:
   cwd: ./agent-project
 ```
 
-Each subprocess start is reported as an `agent_process_starting` JSONL
-diagnostic with its command, arguments, and working directory. Prompt text,
-schema bodies, tool rules, and credential-like argument values are redacted.
+`--verbose` or `verbose: true` includes an `agent_process_starting` DEBUG
+diagnostic with each subprocess command, raw arguments, and working directory.
+These arguments may contain prompts, schemas, tool rules, or credentials; they
+are omitted by default and are not redacted in verbose diagnostics.
 
 `allowed-tools` is a top-level, space-separated YAML frontmatter value
 compatible in spelling with Agent Skills. It is passed through the
@@ -158,6 +159,7 @@ working directory; `--agent-cwd` changes only the agent's working directory.
 | `--max-input-bytes` | 65,536 | Maximum total raw input in `reduce` |
 | `--max-response-bytes` | 8,388,608 | Maximum final answer per agent call |
 | `--timeout` | None | Deadline for each agent call, including auto-mode selection |
+| `--verbose` | Disabled | Include DEBUG diagnostics such as raw agent launch arguments |
 | `-C`, `--agent-cwd` | Invoking directory, then effective `cwd` | Set filter and agent directories |
 
 Limits can also be set in frontmatter as `max_line_bytes`,

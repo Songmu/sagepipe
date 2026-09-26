@@ -58,7 +58,7 @@ func Run(ctx context.Context, cfg config.Config, in io.Reader, out, errOut io.Wr
 		readRequests: make(chan readRequest),
 		readDone:     make(chan struct{}),
 		output:       out,
-		diag:         newDiagnostics(errOut),
+		diag:         newDiagnostics(errOut, cfg.Verbose),
 		runner:       runner,
 	}
 	defer func() {
@@ -366,7 +366,7 @@ func (p *processor) invoke(prompt string, nativeSchema []byte) (agent.Response, 
 	resp, err := p.runner.Run(ctx, agent.Request{
 		Prompt: prompt, NativeSchema: nativeSchema, MaxResponseBytes: p.cfg.MaxResponseBytes,
 		OnLaunch: func(launch agent.Launch) {
-			p.diag.log(slog.LevelInfo, "agent_process_starting", "agent", "Starting agent process", 0,
+			p.diag.log(slog.LevelDebug, "agent_process_starting", "agent", "Starting agent process", 0,
 				"command", launch.Command(), "args", launch.Args(), "cwd", launch.CWD())
 		},
 	})
