@@ -122,8 +122,10 @@ agent:
 
 `-vv` includes an `agent_process_starting` DEBUG
 diagnostic with each subprocess command, raw arguments, and working directory.
-These arguments may contain prompts, schemas, tool rules, or credentials; they
-are omitted by default and with `-v`, and are not redacted in DEBUG diagnostics.
+In `auto` mode, it also includes a `mode_reason` DEBUG diagnostic with the
+agent's unredacted rationale; the INFO `mode_selected` diagnostic retains a
+fixed, safe reason. Raw arguments and rationale may contain prompts, input data,
+schemas, tool rules, or credentials; they are omitted by default and with `-v`.
 
 > [!WARNING]
 > Enable DEBUG diagnostics only in trusted environments. Prefer environment

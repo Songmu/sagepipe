@@ -352,6 +352,7 @@ func TestAutoClassifiesBeforeTransform(t *testing.T) {
 
 func TestAutoDoesNotLogAgentReasonContainingPrompt(t *testing.T) {
 	cfg := testConfig("auto")
+	cfg.Verbosity = 1
 	cfg.Prompt = "private transformation instruction"
 	var out, diag strings.Builder
 	f := &fakeRunner{}
@@ -366,6 +367,42 @@ func TestAutoDoesNotLogAgentReasonContainingPrompt(t *testing.T) {
 	}
 	if strings.Contains(diag.String(), cfg.Prompt) {
 		t.Errorf("prompt leaked into diagnostics: %s", diag.String())
+	}
+}
+
+func TestAutoLogsAgentReasonOnlyAtDebug(t *testing.T) {
+	cfg := testConfig("auto")
+	cfg.Verbosity = 2
+	cfg.Prompt = "Classify each row"
+	var out, diag strings.Builder
+	f := &fakeRunner{}
+	f.run = func(agent.Request) (agent.Response, error) {
+		if len(f.calls) == 1 {
+			return agent.Response{Text: `{"mode":"uncertain","reason":"private rationale"}`}, nil
+		}
+		return agent.Response{Text: `{"items":[]}`}, nil
+	}
+	if code := Run(context.Background(), cfg, strings.NewReader("hello\n"), &out, &diag, f); code != 0 {
+		t.Fatalf("exit code = %d, want 0; diagnostics: %s", code, diag.String())
+	}
+	var selected, rationale map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(diag.String()), "\n") {
+		var event map[string]any
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			t.Fatalf("invalid diagnostic: %s: %v", line, err)
+		}
+		switch event["code"] {
+		case "mode_selected":
+			selected = event
+		case "mode_reason":
+			rationale = event
+		}
+	}
+	if selected["level"] != "INFO" || selected["mode"] != "map" || selected["reason"] == "private rationale" {
+		t.Errorf("unsafe or missing mode selection: %v", selected)
+	}
+	if rationale["level"] != "DEBUG" || rationale["agent_mode"] != "uncertain" || rationale["reason"] != "private rationale" {
+		t.Errorf("missing agent rationale: %v", rationale)
 	}
 }
 
