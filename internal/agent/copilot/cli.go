@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"unicode/utf8"
@@ -86,7 +87,10 @@ func (r *CLIRunner) Run(ctx context.Context, req agent.Request) (agent.Response,
 	if err != nil {
 		return agent.Response{}, err
 	}
-	if !seenResult || !seenMessage {
+	if seenResult && !seenMessage {
+		return agent.Response{}, fmt.Errorf("copilot CLI: %w", agent.ErrNoTextResponse)
+	}
+	if !seenResult {
 		return agent.Response{}, errors.New("copilot CLI: missing final answer or result event")
 	}
 	if err := cli.CheckResponseLimit(final, req.MaxResponseBytes); err != nil {

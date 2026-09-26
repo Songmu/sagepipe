@@ -4,6 +4,7 @@ package acp
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -333,7 +334,7 @@ func (r *runner) Run(ctx context.Context, request agent.Request) (response agent
 		return agent.Response{}, errors.New("ACP agent did not complete the turn")
 	}
 	if chunks == 0 || text == "" {
-		return agent.Response{}, errors.New("ACP agent returned no text response")
+		return agent.Response{}, fmt.Errorf("ACP: %w", agent.ErrNoTextResponse)
 	}
 	response = agent.Response{Text: text}
 	if result.Usage != nil {

@@ -87,6 +87,13 @@ warning; surrounding prose remains invalid. For `reduce`, invalid input rows
 are excluded but still count as failures; a failed aggregate call produces no
 aggregate output.
 
+Each agent request is retried at most twice after an empty response. A response
+that ends in incomplete JSON is retried with a repair request containing the
+original request, incomplete response, and validation error as JSON-encoded
+data. Complete JSON that violates the response envelope or `output_schema` is
+not retried. Retry attempts produce `agent_retry` warnings, and the final
+summary includes `retries` and `recovered` counts.
+
 Exit status is `0` on success, `1` after completing input with rejected
 records, and `2` for failures that prevent completing the run. Standard
 error contains JSONL diagnostics with `level`, `code`, `stage`, and `message`;

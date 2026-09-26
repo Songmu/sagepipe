@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"strings"
+	"sync/atomic"
 	"unicode/utf8"
 
 	"github.com/Songmu/sagepipe/internal/agent"
@@ -29,6 +30,8 @@ type processor struct {
 	lineNo       int
 	failures     int
 	outputs      int
+	retries      atomic.Int64
+	recovered    atomic.Int64
 	rawBytes     int64
 	warnedNative bool
 }
@@ -117,7 +120,8 @@ func (p *processor) finish(status int) int {
 		status = 1
 	}
 	p.diag.log(slog.LevelInfo, "summary", "complete", "Processing finished", 0,
-		"failures", p.failures, "outputs", p.outputs, "exit_code", status)
+		"failures", p.failures, "outputs", p.outputs, "retries", p.retries.Load(),
+		"recovered", p.recovered.Load(), "exit_code", status)
 	return status
 }
 
@@ -226,22 +230,21 @@ func (p *processor) processMap(rec record) error {
 		p.diag.log(slog.LevelError, "input_encoding_failed", "input", "Could not encode input record", rec.line)
 		return err
 	}
-	resp, err := p.invoke(p.transformPrompt(string(data)), p.nativeItemsSchema())
-	if err != nil {
+	result := p.transformWithRetry(p.ctx, p.transformPrompt(string(data)), p.nativeItemsSchema(), rec.line)
+	if result.agentErr != nil {
 		p.failures++
-		p.reportAgentFailure(err, rec.line, "agent")
+		p.reportAgentFailure(result.agentErr, rec.line, "agent")
 		if p.ctx.Err() != nil {
-			return err
+			return result.agentErr
 		}
 		return nil
 	}
-	payload, count, err := p.parseOutput(resp, rec.line)
-	if err != nil {
+	if result.outputErr != nil {
 		p.failures++
-		p.reportInvalidResponse(err, resp, rec.line)
+		p.reportInvalidResponse(result.outputErr, result.response, rec.line)
 		return nil
 	}
-	if err := p.emit(payload, count); err != nil {
+	if err := p.emit(result.payload, result.count); err != nil {
 		return err
 	}
 	return nil
@@ -291,17 +294,16 @@ func (p *processor) runReduce(first *record) int {
 		p.diag.log(slog.LevelError, "input_encoding_failed", "input", "Could not encode input records", 0)
 		return 2
 	}
-	resp, err := p.invoke(p.transformPrompt(string(data)), p.nativeItemsSchema())
-	if err != nil {
-		p.reportAgentFailure(err, 0, "agent")
+	result := p.transformWithRetry(p.ctx, p.transformPrompt(string(data)), p.nativeItemsSchema(), 0)
+	if result.agentErr != nil {
+		p.reportAgentFailure(result.agentErr, 0, "agent")
 		return 2
 	}
-	payload, count, err := p.parseOutput(resp, 0)
-	if err != nil {
-		p.reportInvalidResponse(err, resp, 0)
+	if result.outputErr != nil {
+		p.reportInvalidResponse(result.outputErr, result.response, 0)
 		return 2
 	}
-	if err := p.emit(payload, count); err != nil {
+	if err := p.emit(result.payload, result.count); err != nil {
 		return 2
 	}
 	return 0
@@ -327,26 +329,20 @@ func (p *processor) runAuto() int {
 		called := false
 		if strings.TrimSpace(p.cfg.Prompt) != "" {
 			called = true
-			response, err := p.invoke(modePrompt(p.cfg.Prompt), nil)
-			if err != nil {
-				p.reportAgentFailure(err, 0, "mode")
+			response, agentMode, agentReason, agentErr, parseErr := p.modeWithRetry(modePrompt(p.cfg.Prompt))
+			if agentErr != nil {
+				p.reportAgentFailure(agentErr, 0, "mode")
 				return 2
 			}
-			var agentReason string
-			modeResponse, unwrapped := unwrapJSONCodeFence(response.Text)
-			if unwrapped {
-				p.diag.log(slog.LevelWarn, "markdown_fence_removed", "mode",
-					"Removed Markdown code fence from agent response", 0)
-			}
-			mode, agentReason, err = parseModeResponse(modeResponse)
-			if err != nil {
+			if parseErr != nil {
 				p.diag.log(slog.LevelError, "invalid_mode_response", "mode", "Agent returned an invalid mode decision", 0)
 				text, truncated := diagnosticResponse(response.Text)
 				p.diag.log(slog.LevelDebug, "invalid_mode_response_detail", "mode",
-					"Agent mode response validation failed", 0, "reason", err.Error(), "response", text,
+					"Agent mode response validation failed", 0, "reason", parseErr.Error(), "response", text,
 					"response_bytes", len(response.Text), "response_truncated", truncated)
 				return 2
 			}
+			mode = agentMode
 			p.diag.log(slog.LevelDebug, "mode_reason", "mode", "Agent processing mode rationale", 0,
 				"agent_mode", mode, "reason", agentReason)
 			switch mode {

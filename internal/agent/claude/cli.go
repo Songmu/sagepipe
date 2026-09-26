@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"unicode/utf8"
 
@@ -84,12 +85,12 @@ func (r *Runner) Run(ctx context.Context, req agent.Request) (agent.Response, er
 		}
 		if native {
 			if len(result.StructuredOutput) == 0 || string(result.StructuredOutput) == "null" {
-				return errors.New("claude CLI: missing structured output")
+				return fmt.Errorf("claude CLI: %w", agent.ErrNoTextResponse)
 			}
 			final = string(result.StructuredOutput)
 		} else {
 			if result.Result == nil {
-				return errors.New("claude CLI: missing final answer")
+				return fmt.Errorf("claude CLI: %w", agent.ErrNoTextResponse)
 			}
 			final = *result.Result
 		}
