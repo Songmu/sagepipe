@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strings"
 	"unicode/utf8"
 
@@ -85,12 +84,12 @@ func (r *Runner) Run(ctx context.Context, req agent.Request) (agent.Response, er
 		}
 		if native {
 			if len(result.StructuredOutput) == 0 || string(result.StructuredOutput) == "null" {
-				return fmt.Errorf("claude CLI: %w", agent.ErrNoTextResponse)
+				return agent.ErrNoTextResponse
 			}
 			final = string(result.StructuredOutput)
 		} else {
 			if result.Result == nil {
-				return fmt.Errorf("claude CLI: %w", agent.ErrNoTextResponse)
+				return agent.ErrNoTextResponse
 			}
 			final = *result.Result
 		}

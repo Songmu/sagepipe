@@ -151,6 +151,55 @@ func TestMapRepairsIncompleteJSONResponse(t *testing.T) {
 	}
 }
 
+func TestMapRegeneratesInvalidJSONFormat(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		response string
+	}{
+		{
+			name:     "prose",
+			response: "I'm powered by a model. Here is a summary instead of JSON.",
+		},
+		{
+			name:     "fenced JSON with trailing prose",
+			response: "```json\n{\"items\":[\"valid content\"]}\n```\nI should have returned raw JSON.",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := testConfig("map")
+			cfg.Prompt = "Summarize the record"
+			var out, diag strings.Builder
+			f := &fakeRunner{}
+			f.run = func(req agent.Request) (agent.Response, error) {
+				if len(f.calls) == 1 {
+					return agent.Response{Text: tt.response}, nil
+				}
+				for _, want := range []string{
+					"Regenerate an agent response that failed JSON format validation.",
+					"Use the original request as the source of truth.",
+					"Do not include explanatory prose, self-identification, Markdown, or code fences.",
+					"Summarize the record",
+				} {
+					if !strings.Contains(req.Prompt, want) {
+						t.Errorf("format-correction prompt missing %q: %s", want, req.Prompt)
+					}
+				}
+				return agent.Response{Text: `{"items":["regenerated"]}`}, nil
+			}
+			if code := Run(context.Background(), cfg, strings.NewReader("input\n"), &out, &diag, f); code != 0 {
+				t.Fatalf("exit code = %d, diagnostics: %s", code, diag.String())
+			}
+			if out.String() != "regenerated\n" || len(f.calls) != 2 {
+				t.Fatalf("output=%q calls=%d", out.String(), len(f.calls))
+			}
+			if !strings.Contains(diag.String(), `"reason":"invalid_json_format"`) ||
+				!strings.Contains(diag.String(), `"strategy":"regenerate_response"`) {
+				t.Fatalf("missing format retry diagnostic: %s", diag.String())
+			}
+		})
+	}
+}
+
 func TestMapDoesNotRetryCompleteInvalidOutput(t *testing.T) {
 	cfg := testConfig("map")
 	var out, diag strings.Builder
@@ -693,6 +742,36 @@ func TestAutoRepairsIncompleteModeResponse(t *testing.T) {
 	if !strings.Contains(diag.String(), `"code":"agent_retry"`) ||
 		!strings.Contains(diag.String(), `"stage":"mode"`) {
 		t.Fatalf("missing mode retry diagnostic: %s", diag.String())
+	}
+}
+
+func TestAutoRegeneratesInvalidModeJSONFormat(t *testing.T) {
+	cfg := testConfig("auto")
+	cfg.Prompt = "Translate each record"
+	var out, diag strings.Builder
+	f := &fakeRunner{}
+	f.run = func(req agent.Request) (agent.Response, error) {
+		switch len(f.calls) {
+		case 1:
+			return agent.Response{Text: "I think map mode is appropriate."}, nil
+		case 2:
+			if !strings.Contains(req.Prompt, "Regenerate an agent response that failed JSON format validation.") {
+				t.Errorf("mode format-correction prompt missing: %s", req.Prompt)
+			}
+			return agent.Response{Text: `{"mode":"map","reason":"independent"}`}, nil
+		default:
+			return agent.Response{Text: `{"items":["translated"]}`}, nil
+		}
+	}
+	if code := Run(context.Background(), cfg, strings.NewReader("input\n"), &out, &diag, f); code != 0 {
+		t.Fatalf("exit code = %d, diagnostics: %s", code, diag.String())
+	}
+	if out.String() != "translated\n" || len(f.calls) != 3 {
+		t.Fatalf("output=%q calls=%d", out.String(), len(f.calls))
+	}
+	if !strings.Contains(diag.String(), `"reason":"invalid_json_format"`) ||
+		!strings.Contains(diag.String(), `"stage":"mode"`) {
+		t.Fatalf("missing mode format retry diagnostic: %s", diag.String())
 	}
 }
 
