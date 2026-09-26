@@ -414,6 +414,52 @@ func TestBareTextResponsesAreNormalized(t *testing.T) {
 	checkDiagnostic(t, diag.String(), "bare_array_normalized", 2)
 }
 
+func TestBareArrayFallsBackToArrayValuedItem(t *testing.T) {
+	cfg := testConfig("map")
+	cfg.OutputSchema = config.SchemaSpec{
+		Present: true,
+		JSON:    []byte(`{"type":"array","items":{"type":"integer"}}`),
+		BaseURI: "file:///tmp/sagepipe-output.json",
+	}
+	var out, diag strings.Builder
+	f := &fakeRunner{run: func(agent.Request) (agent.Response, error) {
+		return agent.Response{Text: `[1,2]`}, nil
+	}}
+	if code := Run(context.Background(), cfg, strings.NewReader("input\n"), &out, &diag, f); code != 0 {
+		t.Fatalf("exit code = %d, diagnostics: %s", code, diag.String())
+	}
+	if out.String() != "[1,2]\n" || len(f.calls) != 1 {
+		t.Fatalf("output=%q calls=%d", out.String(), len(f.calls))
+	}
+	checkDiagnostic(t, diag.String(), "bare_item_normalized", 1)
+	if strings.Contains(diag.String(), `"code":"bare_array_normalized"`) {
+		t.Fatalf("array-valued item was split: %s", diag.String())
+	}
+}
+
+func TestBareArrayItemsTakePrecedenceWhenValid(t *testing.T) {
+	cfg := testConfig("map")
+	cfg.OutputSchema = config.SchemaSpec{
+		Present: true,
+		JSON:    []byte(`{"anyOf":[{"type":"integer"},{"type":"array","items":{"type":"integer"}}]}`),
+		BaseURI: "file:///tmp/sagepipe-output.json",
+	}
+	var out, diag strings.Builder
+	f := &fakeRunner{run: func(agent.Request) (agent.Response, error) {
+		return agent.Response{Text: `[1,2]`}, nil
+	}}
+	if code := Run(context.Background(), cfg, strings.NewReader("input\n"), &out, &diag, f); code != 0 {
+		t.Fatalf("exit code = %d, diagnostics: %s", code, diag.String())
+	}
+	if out.String() != "1\n2\n" || len(f.calls) != 1 {
+		t.Fatalf("output=%q calls=%d", out.String(), len(f.calls))
+	}
+	checkDiagnostic(t, diag.String(), "bare_array_normalized", 1)
+	if strings.Contains(diag.String(), `"code":"bare_item_normalized"`) {
+		t.Fatalf("valid array items did not take precedence: %s", diag.String())
+	}
+}
+
 func TestBareTextLineBreakRetries(t *testing.T) {
 	cfg := testConfig("map")
 	var out, diag strings.Builder

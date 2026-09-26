@@ -137,14 +137,21 @@ func (p *processor) parseOutput(response agent.Response, line int) ([]byte, int,
 	}
 
 	items, shape := outputItems(value)
-	var payload []byte
-	for i, item := range items {
-		encoded, err := p.encodeOutputItem(item, i)
-		if err != nil {
+	payload, err := p.encodeOutputItems(items)
+	if err != nil {
+		if shape != outputShapeBareArray {
 			return nil, 0, &outputValidationError{err: err}
 		}
-		payload = append(payload, encoded...)
-		payload = append(payload, '\n')
+		encoded, itemErr := p.encodeOutputItem(value, 0)
+		if itemErr != nil {
+			return nil, 0, &outputValidationError{err: fmt.Errorf(
+				"bare array is neither valid output items (%v) nor a valid output item (%v)",
+				err, itemErr,
+			)}
+		}
+		payload = append(encoded, '\n')
+		items = []any{value}
+		shape = outputShapeBareItem
 	}
 	switch shape {
 	case outputShapeBareItem:
@@ -175,6 +182,19 @@ func outputItems(value any) ([]any, outputShape) {
 		return items, outputShapeBareArray
 	}
 	return []any{value}, outputShapeBareItem
+}
+
+func (p *processor) encodeOutputItems(items []any) ([]byte, error) {
+	var payload []byte
+	for i, item := range items {
+		encoded, err := p.encodeOutputItem(item, i)
+		if err != nil {
+			return nil, err
+		}
+		payload = append(payload, encoded...)
+		payload = append(payload, '\n')
+	}
+	return payload, nil
 }
 
 func (p *processor) encodeOutputItem(item any, index int) ([]byte, error) {

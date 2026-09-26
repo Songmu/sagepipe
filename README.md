@@ -80,11 +80,13 @@ single aggregate call sequentially even when concurrency is greater than 1.
 The agent is instructed to return a single JSON object of the form
 `{"items":[...]}`. sagepipe checks the entire answer and validates every item
 before writing any result from that call. As a recovery measure, a valid bare
-item is treated as one output record, and a valid bare array is treated as zero
-or more output records. These cases produce `bare_item_normalized` or
-`bare_array_normalized` warnings. A response consisting solely of one `json` or
-unlabelled Markdown code block is unwrapped before validation and produces a
-`markdown_fence_removed` warning; surrounding prose remains invalid.
+item is treated as one output record. A bare array is treated as zero or more
+output records when all its elements are valid; otherwise, if the array itself
+satisfies `output_schema`, it is treated as one array-valued record. These cases
+produce `bare_item_normalized` or `bare_array_normalized` warnings. A response
+consisting solely of one `json` or unlabelled Markdown code block is unwrapped
+before validation and produces a `markdown_fence_removed` warning; surrounding
+prose remains invalid.
 
 Invalid input rows and failed `map` calls are reported on standard error
 without inserting error records into standard output. For `reduce`, invalid
