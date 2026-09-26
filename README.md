@@ -130,18 +130,51 @@ path resolution, record and mode semantics, responses, retries, and diagnostics.
 
 ## Installation
 
+### Homebrew
+
+```console
+% brew install Songmu/tap/sagepipe
+```
+
+### Installer script
+
 ```console
 # Install the latest version. (Install it into ./bin/ by default).
-% curl -sfL https://raw.githubusercontent.com/Songmu/sagepipe/main/install.sh | sh -s
+% curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/Songmu/sagepipe/main/install.sh | sh -s
 
 # Specify installation directory ($(go env GOPATH)/bin/) and version.
-% curl -sfL https://raw.githubusercontent.com/Songmu/sagepipe/main/install.sh | sh -s -- -b $(go env GOPATH)/bin [vX.Y.Z]
+% curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/Songmu/sagepipe/main/install.sh | sh -s -- -b $(go env GOPATH)/bin [vX.Y.Z]
 
 # In alpine linux (as it does not come with curl by default)
 % wget -O - -q https://raw.githubusercontent.com/Songmu/sagepipe/main/install.sh | sh -s [vX.Y.Z]
+```
 
-# go install
+### Go
+
+```console
 % go install github.com/Songmu/sagepipe/cmd/sagepipe@latest
+```
+
+## GitHub Actions
+
+sagepipe can be installed and used in a GitHub Actions workflow. Install and
+authenticate the selected agent CLI separately before running sagepipe.
+
+```yaml
+steps:
+  - uses: actions/checkout@v4
+
+  - name: Install sagepipe
+    run: |
+      curl --proto '=https' --tlsv1.2 -fsSL \
+        https://raw.githubusercontent.com/Songmu/sagepipe/main/install.sh |
+        sh -s -- -b "$RUNNER_TEMP/sagepipe/bin"
+      echo "$RUNNER_TEMP/sagepipe/bin" >> "$GITHUB_PATH"
+
+  - name: Run sagepipe
+    run: |
+      printf 'hello\n' |
+        sagepipe --agent copilot --mode map --prompt 'Translate to Japanese'
 ```
 
 ## Author
