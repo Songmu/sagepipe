@@ -305,17 +305,22 @@ func TestCodexCLIAndSchemaCleanup(t *testing.T) {
 }
 
 func TestSubprocessFailures(t *testing.T) {
+	copilotAnswer := `{"type":"assistant.message","data":{"phase":"final_answer","content":"answer"}}` + "\n"
 	for _, tc := range []struct {
-		name   string
-		build  func(cli.Options) (agent.Runner, error)
-		output string
+		name          string
+		build         func(cli.Options) (agent.Runner, error)
+		output        string
+		failureOutput string
 	}{
 		{"Copilot", func(o cli.Options) (agent.Runner, error) { return copilot.NewCLI(o) },
-			"{\"type\":\"assistant.message\",\"data\":{\"phase\":\"final_answer\",\"content\":\"answer\"}}\n{\"type\":\"result\",\"exitCode\":0}\n"},
+			copilotAnswer + `{"type":"result","exitCode":0}` + "\n",
+			copilotAnswer + `{"type":"result","exitCode":2}` + "\n"},
 		{"Claude", func(o cli.Options) (agent.Runner, error) { return claude.New(o) },
-			`{"type":"result","subtype":"success","result":"answer"}` + "\n"},
+			`{"type":"result","subtype":"success","result":"answer"}` + "\n",
+			`{"type":"result","subtype":"error","is_error":true,"result":"secret diagnostic"}` + "\n"},
 		{"Codex", func(o cli.Options) (agent.Runner, error) { return codex.New(o) },
-			"{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"answer\"}}\n{\"type\":\"turn.completed\"}\n"},
+			"{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"answer\"}}\n{\"type\":\"turn.completed\"}\n",
+			"{\"type\":\"error\",\"message\":\"secret diagnostic\"}\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			opts, _ := runnerOptions(t)
@@ -340,6 +345,11 @@ func TestSubprocessFailures(t *testing.T) {
 			if _, err := runner.Run(context.Background(), req); err == nil ||
 				strings.Contains(err.Error(), "secret") || strings.Contains(err.Error(), "not JSON") {
 				t.Fatalf("unsanitized invalid output: %v", err)
+			}
+			t.Setenv("SAGEPIPE_STDOUT", tc.failureOutput)
+			if _, err := runner.Run(context.Background(), agent.Request{Prompt: "secret prompt"}); err == nil ||
+				strings.Contains(err.Error(), "secret") {
+				t.Fatalf("failure event leaked data: %v", err)
 			}
 			t.Setenv("SAGEPIPE_STDOUT", "")
 			if _, err := runner.Run(context.Background(), req); err == nil {
@@ -371,33 +381,34 @@ func TestSubprocessFailures(t *testing.T) {
 }
 
 func TestUnsupportedAndInvalidConfiguration(t *testing.T) {
-	opts, path := runnerOptions(t)
-	opts.AllowedTools = []string{"Read"}
-	runner, err := codex.New(opts)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := runner.Run(context.Background(), agent.Request{Prompt: "secret"}); err == nil ||
-		!strings.Contains(err.Error(), "unsupported") {
-		t.Fatalf("Codex accepted unsupported tools: %v", err)
-	}
-	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("unexpected subprocess: %v", err)
-	}
-	opts.AllowedTools = nil
-	runner, err = codex.New(opts)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := runner.Run(context.Background(), agent.Request{NativeSchema: []byte("{")}); err == nil {
-		t.Fatal("invalid schema was silently dropped")
-	}
-	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("unexpected subprocess: %v", err)
+	for _, tc := range []struct {
+		name, wantError string
+		tools           []string
+		request         agent.Request
+	}{
+		{"unsupported tools", "unsupported", []string{"Read"}, agent.Request{Prompt: "secret"}},
+		{"invalid schema", "", nil, agent.Request{NativeSchema: []byte("{")}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			opts, path := runnerOptions(t)
+			opts.AllowedTools = tc.tools
+			runner, err := codex.New(opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := runner.Run(context.Background(), tc.request); err == nil ||
+				(tc.wantError != "" && !strings.Contains(err.Error(), tc.wantError)) {
+				t.Fatalf("Run error = %v, want %q", err, tc.wantError)
+			}
+			if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("unexpected subprocess: %v", err)
+			}
+		})
 	}
 }
 
 func TestNativeSchemaSafety(t *testing.T) {
+	const optionalField = `{"type":"object","properties":{"x":{"type":"string"}},"required":[],"additionalProperties":false}`
 	for _, tc := range []struct {
 		name            string
 		schema          string
@@ -406,8 +417,8 @@ func TestNativeSchemaSafety(t *testing.T) {
 		wantInvalidJSON bool
 	}{
 		{"simple", safeSchema, true, true, false},
-		{"optional Claude field", `{"type":"object","properties":{"x":{"type":"string"}},"required":[],"additionalProperties":false}`, false, true, false},
-		{"optional Codex field", `{"type":"object","properties":{"x":{"type":"string"}},"required":[],"additionalProperties":false}`, true, false, false},
+		{"optional Claude field", optionalField, false, true, false},
+		{"optional Codex field", optionalField, true, false, false},
 		{"reference", `{"$ref":"#/$defs/x"}`, false, false, false},
 		{"constraint", `{"type":"object","properties":{"x":{"type":"string","pattern":"a"}},"required":["x"],"additionalProperties":false}`, true, false, false},
 		{"open object", `{"type":"object","properties":{},"required":[]}`, false, false, false},
@@ -418,34 +429,6 @@ func TestNativeSchemaSafety(t *testing.T) {
 			native, err := cli.SafeNativeSchema([]byte(tc.schema), tc.allRequired)
 			if native != tc.wantNative || (err != nil) != tc.wantInvalidJSON {
 				t.Fatalf("native=%v error=%v", native, err)
-			}
-		})
-	}
-}
-
-func TestProviderFailureEvents(t *testing.T) {
-	for _, tc := range []struct {
-		name   string
-		build  func(cli.Options) (agent.Runner, error)
-		output string
-	}{
-		{"Copilot", func(o cli.Options) (agent.Runner, error) { return copilot.NewCLI(o) },
-			"{\"type\":\"assistant.message\",\"data\":{\"phase\":\"final_answer\",\"content\":\"answer\"}}\n{\"type\":\"result\",\"exitCode\":2}\n"},
-		{"Claude", func(o cli.Options) (agent.Runner, error) { return claude.New(o) },
-			`{"type":"result","subtype":"error","is_error":true,"result":"secret diagnostic"}` + "\n"},
-		{"Codex", func(o cli.Options) (agent.Runner, error) { return codex.New(o) },
-			"{\"type\":\"error\",\"message\":\"secret diagnostic\"}\n"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			opts, _ := runnerOptions(t)
-			t.Setenv("SAGEPIPE_STDOUT", tc.output)
-			runner, err := tc.build(opts)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err := runner.Run(context.Background(), agent.Request{Prompt: "secret prompt"}); err == nil ||
-				strings.Contains(err.Error(), "secret") {
-				t.Fatalf("failure event leaked data: %v", err)
 			}
 		})
 	}

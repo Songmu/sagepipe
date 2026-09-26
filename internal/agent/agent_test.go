@@ -1,7 +1,7 @@
 package agent
 
 import (
-	"reflect"
+	"slices"
 	"testing"
 )
 
@@ -13,20 +13,14 @@ func TestNewLaunchCopiesArguments(t *testing.T) {
 		"--acp",
 		"--model", "test-model",
 	}
+	want := slices.Clone(input)
 	launch := NewLaunch("copilot", input, "/tmp/project")
-	want := []string{
-		"--disable-mcp-server=workiq",
-		"-p", "private prompt",
-		"--additional-mcp-config", `{"env":{"API_TOKEN":"private-mcp-token"}}`,
-		"--acp",
-		"--model", "test-model",
-	}
 	if launch.Command() != "copilot" || launch.CWD() != "/tmp/project" ||
-		!reflect.DeepEqual(launch.Args(), want) {
+		!slices.Equal(launch.Args(), want) {
 		t.Fatalf("launch = %q %q %q, want %q %q %q",
 			launch.Command(), launch.Args(), launch.CWD(), "copilot", want, "/tmp/project")
 	}
-	if !reflect.DeepEqual(input, want) {
+	if !slices.Equal(input, want) {
 		t.Fatalf("NewLaunch mutated input: %q", input)
 	}
 	args := launch.Args()
