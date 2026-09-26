@@ -241,6 +241,13 @@ func (p *processor) processMap(rec record) error {
 		p.diag.log(slog.LevelError, "invalid_response", "output", "Agent response is not valid output", rec.line)
 		return nil
 	}
+	if err := p.emit(payload, count); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (p *processor) emit(payload []byte, count int) error {
 	if err := writeOutput(p.output, payload); err != nil {
 		p.diag.log(slog.LevelError, "output_write_failed", "output", "Could not write standard output", 0)
 		return err
@@ -294,11 +301,9 @@ func (p *processor) runReduce(first *record) int {
 		p.diag.log(slog.LevelError, "invalid_response", "output", "Agent response is not valid output", 0)
 		return 2
 	}
-	if err := writeOutput(p.output, payload); err != nil {
-		p.diag.log(slog.LevelError, "output_write_failed", "output", "Could not write standard output", 0)
+	if err := p.emit(payload, count); err != nil {
 		return 2
 	}
-	p.outputs += count
 	return 0
 }
 
