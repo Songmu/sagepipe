@@ -102,6 +102,30 @@ func TestParseVerbosity(t *testing.T) {
 	}
 }
 
+func TestParseIgnoreFailures(t *testing.T) {
+	root := t.TempDir()
+	for _, tt := range []struct {
+		name string
+		args []string
+		want bool
+	}{
+		{"default", nil, false},
+		{"short", []string{"-i"}, true},
+		{"long", []string{"--ignore-failures"}, true},
+		{"explicit false", []string{"--ignore-failures", "-i=false"}, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := Parse(tt.args, root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.IgnoreFailures != tt.want {
+				t.Fatalf("IgnoreFailures = %t, want %t", cfg.IgnoreFailures, tt.want)
+			}
+		})
+	}
+}
+
 func TestParsePathsSchemasAndOverrides(t *testing.T) {
 	root := t.TempDir()
 	project := filepath.Join(root, "project")
@@ -590,7 +614,7 @@ func TestUsage(t *testing.T) {
 	if !strings.HasPrefix(usage, "Usage: sagepipe [options] < stdin > stdout\n\nOptions:\n") {
 		t.Fatalf("unexpected usage header: %q", usage)
 	}
-	for _, name := range []string{"-C", "--cwd", "-h", "--help", "--config", "--agent", "--input-schema", "--output-schema"} {
+	for _, name := range []string{"-C", "--cwd", "-h", "--help", "-i", "--ignore-failures", "--config", "--agent", "--input-schema", "--output-schema"} {
 		if !strings.Contains(usage, "  "+name+" ") {
 			t.Errorf("usage omits %s: %s", name, usage)
 		}

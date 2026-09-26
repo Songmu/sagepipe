@@ -71,6 +71,9 @@ standard output. Exit status is `0` on success, `1` for rejected records after
 processing input, and `2` when the run cannot complete. See the
 [reference](docs/reference.md) for exact record handling, response validation,
 retries, diagnostics, and concurrency behavior.
+Use `-i` or `--ignore-failures` to exit `0` after writing at least one valid
+output record even if errors occur; diagnostics are still reported on standard
+error. Without any valid output records, the usual exit status applies.
 
 ## Agents and permissions
 
@@ -120,6 +123,7 @@ for permission and log-masking details.
 | `--input-schema`, `--output-schema` | None | Validate records and select JSONL on that side |
 | `-C`, `--cwd`, `--agent-cwd` | Invoking directory | Set the process or agent working directory |
 | `--timeout`, `--max-line-bytes`, `--max-input-bytes`, `--max-response-bytes` | See reference | Limit agent calls and record sizes |
+| `-i`, `--ignore-failures` | Off | Exit `0` if at least one valid output record was written, even on failure |
 | `-v`, `--verbose` | WARN diagnostics | Include INFO; repeat for DEBUG |
 
 See the [reference](docs/reference.md) for all defaults, frontmatter settings,

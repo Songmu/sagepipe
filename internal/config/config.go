@@ -40,6 +40,7 @@ type Config struct {
 	MaxInputBytes, MaxLineBytes, MaxResponseBytes int64
 	Timeout                                       time.Duration
 	Concurrency, Verbosity                        int
+	IgnoreFailures                                bool
 }
 
 type flagOptions struct {
@@ -48,7 +49,7 @@ type flagOptions struct {
 	timeout                                                 string
 	maxInputBytes, maxLineBytes, maxResponseBytes           int64
 	concurrency, verbosity                                  int
-	help                                                    bool
+	help, ignoreFailures                                    bool
 }
 
 type verbosityFlag struct {
@@ -98,6 +99,9 @@ func newFlagSet(o *flagOptions) *flag.FlagSet {
 	fs.Int64Var(&o.maxLineBytes, "max-line-bytes", 0, "maximum map line bytes")
 	fs.Int64Var(&o.maxResponseBytes, "max-response-bytes", 0, "maximum response bytes")
 	fs.StringVar(&o.timeout, "timeout", "", "agent call timeout")
+	const ignoreFailuresDescription = "exit 0 after writing any valid output records, even on failure"
+	fs.BoolVar(&o.ignoreFailures, "i", false, ignoreFailuresDescription)
+	fs.BoolVar(&o.ignoreFailures, "ignore-failures", false, ignoreFailuresDescription)
 	const verboseDescription = "include INFO diagnostics; repeat for DEBUG"
 	fs.Var(verbosityFlag{&o.verbosity, 1}, "v", verboseDescription)
 	fs.Var(verbosityFlag{&o.verbosity, 1}, "verbose", verboseDescription)
@@ -230,6 +234,7 @@ func loadConfig(cliCWD, configPath string, hasConfig bool, verbosity int) (Confi
 }
 
 func applyOverrides(c *Config, cliCWD string, opts flagOptions, set map[string]bool) error {
+	c.IgnoreFailures = opts.ignoreFailures
 	if set["C"] || set["cwd"] {
 		c.CWD = cliCWD
 	}

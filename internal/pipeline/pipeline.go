@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -53,6 +54,7 @@ type readResult struct {
 
 // Run processes a stream and returns 0 for success, 1 for completed runs with
 // rejected input records, or 2 for failures that prevent completing the run.
+// With IgnoreFailures, any successfully written output record makes the exit status 0.
 func Run(ctx context.Context, cfg config.Config, in io.Reader, out, errOut io.Writer, runner agent.Runner) (status int) {
 	p := &processor{
 		ctx:          ctx,
@@ -118,6 +120,9 @@ func compileSchema(spec config.SchemaSpec) (*schema.Document, error) {
 func (p *processor) finish(status int) int {
 	if status == 0 && p.failures != 0 {
 		status = 1
+	}
+	if p.cfg.IgnoreFailures && p.outputs > 0 {
+		status = 0
 	}
 	p.diag.log(slog.LevelInfo, "summary", "complete", "Processing finished", 0,
 		"failures", p.failures, "outputs", p.outputs, "retries", p.retries.Load(),
@@ -251,7 +256,9 @@ func (p *processor) processMap(rec record) error {
 }
 
 func (p *processor) emit(payload []byte, count int) error {
-	if err := writeOutput(p.output, payload); err != nil {
+	written, err := writeOutput(p.output, payload)
+	if err != nil {
+		p.outputs += written
 		p.diag.log(slog.LevelError, "output_write_failed", "output", "Could not write standard output", 0)
 		return err
 	}
@@ -458,16 +465,20 @@ func (p *processor) reportInputFailure(err error) {
 	p.diag.log(slog.LevelError, code, "input", message, 0)
 }
 
-func writeOutput(w io.Writer, payload []byte) error {
+func writeOutput(w io.Writer, payload []byte) (int, error) {
+	written := 0
 	for len(payload) != 0 {
 		n, err := w.Write(payload)
+		if n > 0 && n <= len(payload) {
+			written += bytes.Count(payload[:n], []byte{'\n'})
+		}
 		if err != nil {
-			return err
+			return written, err
 		}
 		if n <= 0 || n > len(payload) {
-			return io.ErrShortWrite
+			return written, io.ErrShortWrite
 		}
 		payload = payload[n:]
 	}
-	return nil
+	return written, nil
 }

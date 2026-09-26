@@ -62,6 +62,11 @@ Exit status is `0` on success, `1` after completing input with rejected
 records, and `2` for failures that prevent completing the run. Standard
 error contains JSONL diagnostics with `level`, `code`, `stage`, and `message`;
 input-specific diagnostics also include the one-based physical `line`.
+With `-i` or `--ignore-failures`, writing at least one valid output record
+changes a nonzero exit status to `0`, even if processing subsequently fails
+(including input read failures or cancellation). No output records, including
+a valid empty result, leave the usual exit status unchanged. Error diagnostics
+are still emitted; this flag does not skip processing or suppress failures.
 By default, only WARN and ERROR diagnostics are emitted. `-v` adds INFO
 diagnostics; `-vv` (or repeating `--verbose`) also adds DEBUG diagnostics.
 When available, INFO `agent_usage` diagnostics include `model`, `model_source`,
@@ -176,6 +181,7 @@ directory, while configuration-file `agent.cwd` remains configuration-relative.
 | `--max-input-bytes` | 65,536 | Maximum total raw input in `reduce` |
 | `--max-response-bytes` | 8,388,608 | Maximum final answer per agent call |
 | `--timeout` | None | Deadline for each agent call, including auto-mode selection |
+| `-i`, `--ignore-failures` | Off | Exit `0` after writing at least one valid output record, even on failure |
 | `-v`, `--verbose` | WARN diagnostics | Show INFO diagnostics; repeat (`-vv`) for DEBUG diagnostics including raw agent launch arguments |
 | `-C`, `--cwd` | Invoking directory | Set the sagepipe process directory |
 | `--agent-cwd` | Effective `cwd` | Set only the agent directory |
@@ -187,7 +193,8 @@ responses that cannot be decoded as JSON may cause up to two automatic retries.
 
 Ctrl-C (and SIGTERM on Unix) cancels processing and attempts to close standard
 input to release a pending read. The run reports a JSONL cancellation diagnostic
-and exits with status 2 after agent cleanup. On Unix, CLI and ACP agent
+and exits with status 2 after agent cleanup (or 0 with `--ignore-failures` if
+at least one valid output record was already written). On Unix, CLI and ACP agent
 subprocess groups are terminated on cancellation. On Windows, CLI waiting is
 bounded even when descendants keep its output pipes open, but only the direct
 CLI or ACP agent process is guaranteed to be terminated; descendants may
