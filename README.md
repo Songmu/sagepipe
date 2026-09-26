@@ -88,8 +88,21 @@ input-specific diagnostics also include the one-based physical `line`.
 `copilot` defaults to ACP; `claude` and `codex` use their respective
 non-interactive CLIs. Install and authenticate the selected agent
 separately. Copilot can instead use its CLI with `--protocol cli`. There is
-no automatic fallback between agents or protocols. A custom ACP agent can
-be configured with a command and arguments:
+no automatic fallback between agents or protocols. `agent.args` adds
+arguments before sagepipe's required launch arguments for built-in agents:
+
+```yaml
+agent:
+  provider: copilot
+  args:
+    - --disable-builtin-mcps
+    - --disable-mcp-server=workiq
+```
+
+Built-in agent arguments cannot contain a standalone `--`, because sagepipe
+appends required protocol and machine-readable output arguments after them.
+
+A custom ACP agent can be configured with a command and arguments:
 
 ```yaml
 agent:
@@ -98,6 +111,27 @@ agent:
   args: [--stdio]
   cwd: ./agent-project
 ```
+
+`--verbose` or `verbose: true` includes an `agent_process_starting` DEBUG
+diagnostic with each subprocess command, raw arguments, and working directory.
+These arguments may contain prompts, schemas, tool rules, or credentials; they
+are omitted by default and are not redacted in verbose diagnostics.
+
+> [!WARNING]
+> Enable verbose diagnostics only in trusted environments. Prefer environment
+> variables or protected files over command-line arguments for sensitive data.
+> Before running with `--verbose` in CI, register every sensitive value with the
+> CI system's log-masking mechanism. In GitHub Actions, emit
+> `::add-mask::{value}` before any command can print that value:
+>
+> ```yaml
+> - name: Mask generated credentials
+>   run: |
+>     echo "::add-mask::$MCP_CREDENTIAL"
+> ```
+>
+> Register masks before invoking sagepipe and repeat this for each sensitive
+> value in every job where verbose diagnostics may be captured.
 
 `allowed-tools` is a top-level, space-separated YAML frontmatter value
 compatible in spelling with Agent Skills. It is passed through the
@@ -141,6 +175,7 @@ working directory; `--agent-cwd` changes only the agent's working directory.
 | `--max-input-bytes` | 65,536 | Maximum total raw input in `reduce` |
 | `--max-response-bytes` | 8,388,608 | Maximum final answer per agent call |
 | `--timeout` | None | Deadline for each agent call, including auto-mode selection |
+| `--verbose` | Disabled | Include DEBUG diagnostics such as raw agent launch arguments |
 | `-C`, `--agent-cwd` | Invoking directory, then effective `cwd` | Set filter and agent directories |
 
 Limits can also be set in frontmatter as `max_line_bytes`,

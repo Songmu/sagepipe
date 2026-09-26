@@ -54,6 +54,7 @@ func TestParseDefaultsAndPrompt(t *testing.T) {
 			if c.CWD != root || !reflect.DeepEqual(c.Agent, AgentConfig{Provider: "copilot", Protocol: "acp", CWD: root}) ||
 				c.Mode != "auto" || c.Prompt != tt.wantPrompt || c.AllowedTools != "" ||
 				c.InputSchema.Present || c.OutputSchema.Present || c.Timeout != 0 ||
+				c.Verbose ||
 				c.MaxInputBytes != 65536 || c.MaxLineBytes != 1048576 || c.MaxResponseBytes != 8388608 {
 				t.Fatalf("unexpected defaults: %+v", c)
 			}
@@ -81,6 +82,7 @@ agent:
   provider: copilot
   protocol: cli
   model: inherited
+  args: [--disable-builtin-mcps, --disable-mcp-server=workiq]
   cwd: ./config dir/agent
 allowed-tools: Read Grep
 input_schema: ./input.json
@@ -92,6 +94,7 @@ max_input_bytes: 128
 max_line_bytes: 256
 max_response_bytes: 512
 timeout: 2m
+verbose: true
 concurrency: [invalid, but, ignored]
 ---
 
@@ -109,9 +112,10 @@ Original prompt.
 				t.Helper()
 				if c.CWD != configDir || c.Agent.CWD != agentDir ||
 					c.Agent.Protocol != "cli" || c.Agent.Model != "inherited" ||
+					!reflect.DeepEqual(c.Agent.Args, []string{"--disable-builtin-mcps", "--disable-mcp-server=workiq"}) ||
 					c.AllowedTools != "Read Grep" || c.Prompt != "\nOriginal prompt.\n" ||
 					c.MaxInputBytes != 128 || c.MaxLineBytes != 256 || c.MaxResponseBytes != 512 ||
-					c.Timeout != 2*time.Minute {
+					c.Timeout != 2*time.Minute || !c.Verbose {
 					t.Fatalf("unexpected file settings: %+v", c)
 				}
 				if !reflect.DeepEqual(c.InputSchema, SchemaSpec{Present: true, Path: filepath.Join(project, "input.json")}) {
@@ -135,6 +139,7 @@ Original prompt.
 				"--agent", "claude", "--model", "replacement",
 				"--agent-cwd", "./override", "--allowed-tools=",
 				"--prompt=", "--mode", "reduce", "--timeout", "3s",
+				"--verbose=false",
 				"--input-schema", "./true", "--output-schema", ` {"$ref":"schema.json"} `,
 			},
 			check: func(t *testing.T, c Config) {
@@ -142,7 +147,7 @@ Original prompt.
 				if c.CWD != project || !reflect.DeepEqual(c.Agent, AgentConfig{
 					Provider: "claude", Protocol: "cli", Model: "replacement", CWD: overrideDir,
 				}) || c.AllowedTools != "" || c.Prompt != "" || c.Mode != "reduce" ||
-					c.Timeout != 3*time.Second {
+					c.Timeout != 3*time.Second || c.Verbose {
 					t.Fatalf("unexpected overrides: %+v", c)
 				}
 				if c.InputSchema.Path != filepath.Join(project, "true") ||
@@ -358,7 +363,9 @@ func TestParseRejectsInvalidOptions(t *testing.T) {
 		{"custom allowed tools", "agent: {protocol: acp, command: my-agent}\nallowed-tools: Read", nil, "allowed-tools"},
 		{"custom allowed tools cleared", "agent: {protocol: acp, command: my-agent}\nallowed-tools: Read", []string{"--allowed-tools="}, ""},
 		{"builtin custom command", "agent: {provider: copilot, command: custom}", nil, "command is only"},
-		{"builtin args", "agent: {provider: claude, args: []}", nil, "args are only"},
+		{"builtin args", "agent: {provider: claude, args: [--verbose]}", nil, ""},
+		{"builtin end of options", "agent: {provider: copilot, args: [--]}", nil, `"--" is not supported`},
+		{"custom end of options", "agent: {protocol: acp, command: my-agent, args: [--]}", nil, ""},
 		{"bad agent name", "agent: invalid", nil, "unsupported provider"},
 		{"bad agent type", "agent: [copilot]", nil, "expected a provider"},
 		{"bad agent args type", "agent: {protocol: acp, command: custom, args: [12]}", nil, "args"},
@@ -387,6 +394,7 @@ func TestParseRejectsInvalidOptions(t *testing.T) {
 		{"timeout zero file", "timeout: 0s", nil, "must be positive"},
 		{"timeout negative flag", "", []string{"--timeout=-1s"}, "must be positive"},
 		{"timeout empty flag", "", []string{"--timeout="}, "invalid duration"},
+		{"verbose type", "verbose: enabled", nil, "verbose: expected a boolean"},
 		{"bad schema array", "input_schema: [string]", nil, "expected a schema object"},
 		{"bad schema null", "output_schema: null", nil, "expected a schema object"},
 		{"bad schema number", "output_schema: 42", nil, "expected a schema object"},

@@ -27,7 +27,7 @@ func New(cfg config.Config) (agent.Runner, error) {
 			if err := requireProgram("copilot"); err != nil {
 				return nil, err
 			}
-			return copilot.NewACP(selected.Model, selected.CWD, cfg.AllowedTools)
+			return copilot.NewACP(selected.Model, selected.CWD, cfg.AllowedTools, selected.Args)
 		case "":
 			if cfg.AllowedTools != "" {
 				return nil, errors.New("custom ACP agents do not support allowed-tools")
@@ -76,7 +76,7 @@ func New(cfg config.Config) (agent.Runner, error) {
 			return nil, err
 		}
 		options := cli.Options{
-			Program: program, Dir: selected.CWD, Model: selected.Model,
+			Program: program, Args: selected.Args, Dir: selected.CWD, Model: selected.Model,
 			AllowedTools: tools, MaxOutputBytes: eventBytes,
 		}
 		switch program {

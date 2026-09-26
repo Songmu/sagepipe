@@ -161,6 +161,7 @@ func TestCopilotCLI(t *testing.T) {
 	opts, capturePath := runnerOptions(t)
 	opts.Model = "test-model"
 	opts.AllowedTools = []string{"shell(git status:*)", "read"}
+	opts.Args = []string{"--disable-builtin-mcps", "--disable-mcp-server=workiq"}
 	runner, err := copilot.NewCLI(opts)
 	if err != nil {
 		t.Fatal(err)
@@ -179,6 +180,8 @@ func TestCopilotCLI(t *testing.T) {
 	if first.Dir != opts.Dir || first.Marker != "inherited" || first.Prompt != "" ||
 		argValue(first.Args, "-p") != "short" || argValue(first.Args, "--model") != "test-model" ||
 		!slices.Contains(first.Args, "--allow-tool=shell(git status:*),read") ||
+		!slices.Contains(first.Args, "--disable-builtin-mcps") ||
+		!slices.Contains(first.Args, "--disable-mcp-server=workiq") ||
 		!slices.Contains(first.Args, "--output-format=json") || !slices.Contains(first.Args, "--no-ask-user") {
 		t.Fatalf("unexpected process options: %+v", first)
 	}
@@ -209,6 +212,7 @@ func TestCopilotCLI(t *testing.T) {
 func TestClaudeCLI(t *testing.T) {
 	opts, capturePath := runnerOptions(t)
 	opts.Model = "model"
+	opts.Args = []string{"--verbose"}
 	opts.AllowedTools = []string{"Bash(git status:*)", "Read"}
 	runner, err := claude.New(opts)
 	if err != nil {
@@ -225,6 +229,7 @@ func TestClaudeCLI(t *testing.T) {
 	capture := captured(t, capturePath)
 	if capture.Dir != opts.Dir || argValue(capture.Args, "--json-schema") != safeSchema ||
 		argValue(capture.Args, "--model") != "model" || argValue(capture.Args, "--allowedTools") != "Bash(git status:*)" ||
+		!slices.Contains(capture.Args, "--verbose") ||
 		!slices.Contains(capture.Args, "Read") || !slices.Contains(capture.Args, "-p") ||
 		!strings.Contains(capture.Prompt, "prompt ") {
 		t.Fatalf("unexpected Claude arguments: %+v", capture)
@@ -244,6 +249,7 @@ func TestClaudeCLI(t *testing.T) {
 func TestCodexCLIAndSchemaCleanup(t *testing.T) {
 	opts, capturePath := runnerOptions(t)
 	opts.Model = "model"
+	opts.Args = []string{"--sandbox=read-only"}
 	tmp := t.TempDir()
 	t.Setenv("TMPDIR", tmp)
 	t.Setenv("TMP", tmp)
@@ -265,6 +271,7 @@ func TestCodexCLIAndSchemaCleanup(t *testing.T) {
 	capture := captured(t, capturePath)
 	if capture.Schema != safeSchema || capture.SchemaPath == "" || argValue(capture.Args, "--model") != "model" ||
 		!slices.Contains(capture.Args, "exec") || !slices.Contains(capture.Args, "--json") ||
+		!slices.Contains(capture.Args, "--sandbox=read-only") ||
 		capture.Args[len(capture.Args)-1] != "-" || !strings.Contains(capture.Prompt, "long ") {
 		t.Fatalf("unexpected Codex process: %+v", capture)
 	}
@@ -499,7 +506,7 @@ func TestExactEventStreamBoundary(t *testing.T) {
 	for _, n := range []int{512, 513} {
 		t.Setenv("SAGEPIPE_BYTES", strconv.Itoa(n))
 		var got int
-		err := cli.Execute(context.Background(), "test", prepared, nil, nil, func(line []byte) error {
+		err := cli.Execute(context.Background(), "test", prepared, nil, nil, nil, func(line []byte) error {
 			got += len(line)
 			return nil
 		})
@@ -550,7 +557,7 @@ func TestExecuteInheritedPipes(t *testing.T) {
 				}
 			}()
 			started := time.Now()
-			err = cli.Execute(ctx, "test", prepared, nil, nil, func(line []byte) error {
+			err = cli.Execute(ctx, "test", prepared, nil, nil, nil, func(line []byte) error {
 				if tc.name == "cancel" {
 					cancelTimer = time.AfterFunc(100*time.Millisecond, cancel)
 				}
@@ -620,7 +627,7 @@ func TestExecuteSuccessfulPipes(t *testing.T) {
 	t.Setenv("SAGEPIPE_STDOUT", "first\nsecond\n")
 	t.Setenv("SAGEPIPE_STDERR", "secret stderr")
 	var lines []string
-	err = cli.Execute(context.Background(), "test", prepared, nil, nil, func(line []byte) error {
+	err = cli.Execute(context.Background(), "test", prepared, nil, nil, nil, func(line []byte) error {
 		lines = append(lines, string(line))
 		return nil
 	})

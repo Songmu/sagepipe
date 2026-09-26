@@ -9,7 +9,24 @@ type Request struct {
 	Prompt           string
 	NativeSchema     []byte
 	MaxResponseBytes int64
+	OnLaunch         func(Launch)
 }
+
+// Launch describes an agent subprocess immediately before it is started.
+type Launch struct {
+	command string
+	args    []string
+	cwd     string
+}
+
+// NewLaunch copies launch metadata for diagnostics.
+func NewLaunch(command string, args []string, cwd string) Launch {
+	return Launch{command: command, args: append([]string(nil), args...), cwd: cwd}
+}
+
+func (l Launch) Command() string { return l.command }
+func (l Launch) Args() []string  { return append([]string(nil), l.args...) }
+func (l Launch) CWD() string     { return l.cwd }
 
 // Usage contains usage figures when the selected agent reports them.
 type Usage struct {

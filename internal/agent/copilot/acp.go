@@ -10,8 +10,9 @@ import (
 
 // NewACP configures Copilot in stdio ACP mode; the first Run starts it.
 // Tool availability is process-wide across the runner's sessions.
-func NewACP(model, cwd, allowedTools string) (agent.Runner, error) {
-	args := []string{"--acp", "--stdio"}
+func NewACP(model, cwd, allowedTools string, extraArgs []string) (agent.Runner, error) {
+	args := append([]string(nil), extraArgs...)
+	args = append(args, "--acp", "--stdio")
 	if model != "" {
 		args = append(args, "--model", model)
 	}

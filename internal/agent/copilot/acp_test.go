@@ -74,7 +74,7 @@ func TestNewACPIgnoresCopilotToolNotice(t *testing.T) {
 	t.Setenv("PATH", bin)
 	t.Setenv("SAGEPIPE_COPILOT_NOTICE_HELPER", "1")
 
-	r, err := NewACP("", t.TempDir(), "view")
+	r, err := NewACP("", t.TempDir(), "view", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,10 +103,14 @@ func TestNewACPLaunchArguments(t *testing.T) {
 
 	for _, tt := range []struct {
 		name, model, tools string
+		extra              []string
 		want               []string
 	}{
-		{"defaults", "", "", []string{"--acp", "--stdio"}},
-		{"model and tools", "test-model", "view   grep\tglob", []string{
+		{"defaults", "", "", nil, []string{"--acp", "--stdio"}},
+		{"extra arguments", "", "", []string{"--disable-builtin-mcps", "--disable-mcp-server=workiq"}, []string{
+			"--disable-builtin-mcps", "--disable-mcp-server=workiq", "--acp", "--stdio",
+		}},
+		{"model and tools", "test-model", "view   grep\tglob", nil, []string{
 			"--acp", "--stdio", "--model", "test-model", "--available-tools=view,grep,glob",
 		}},
 	} {
@@ -114,7 +118,7 @@ func TestNewACPLaunchArguments(t *testing.T) {
 			if err := os.Remove(argsFile); err != nil && !os.IsNotExist(err) {
 				t.Fatal(err)
 			}
-			r, err := NewACP(tt.model, t.TempDir(), tt.tools)
+			r, err := NewACP(tt.model, t.TempDir(), tt.tools, tt.extra)
 			if r == nil || err != nil {
 				t.Fatalf("NewACP() = (%v, %v), expected an unused runner", r, err)
 			}
@@ -143,7 +147,7 @@ func TestNewACPLaunchArguments(t *testing.T) {
 		if err := os.Remove(argsFile); err != nil && !os.IsNotExist(err) {
 			t.Fatal(err)
 		}
-		r, err := NewACP("", t.TempDir(), tools)
+		r, err := NewACP("", t.TempDir(), tools, nil)
 		if r != nil || err == nil || !strings.Contains(err.Error(), "allowed-tools") {
 			t.Fatalf("NewACP(tools=%q) = (%v, %v)", tools, r, err)
 		}
@@ -151,7 +155,7 @@ func TestNewACPLaunchArguments(t *testing.T) {
 			t.Fatalf("invalid tools launched Copilot: %v", err)
 		}
 	}
-	r, err := NewACP("", t.TempDir(), "")
+	r, err := NewACP("", t.TempDir(), "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -38,6 +38,7 @@ type Config struct {
 	InputSchema, OutputSchema                     SchemaSpec
 	MaxInputBytes, MaxLineBytes, MaxResponseBytes int64
 	Timeout                                       time.Duration
+	Verbose                                       bool
 }
 
 type flagOptions struct {
@@ -45,7 +46,7 @@ type flagOptions struct {
 	mode, prompt, allowedTools, inputSchema, outputSchema   string
 	timeout                                                 string
 	maxInputBytes, maxLineBytes, maxResponseBytes           int64
-	help                                                    bool
+	help, verbose                                           bool
 }
 
 func newFlagSet(o *flagOptions) *flag.FlagSet {
@@ -66,6 +67,7 @@ func newFlagSet(o *flagOptions) *flag.FlagSet {
 	fs.Int64Var(&o.maxLineBytes, "max-line-bytes", 0, "maximum map line bytes")
 	fs.Int64Var(&o.maxResponseBytes, "max-response-bytes", 0, "maximum response bytes")
 	fs.StringVar(&o.timeout, "timeout", "", "agent call timeout")
+	fs.BoolVar(&o.verbose, "verbose", false, "include debug diagnostics")
 	const helpDescription = "display usage"
 	fs.BoolVar(&o.help, "h", false, helpDescription)
 	fs.BoolVar(&o.help, "help", false, helpDescription)
@@ -217,6 +219,9 @@ func Parse(argv []string, startupCWD string) (Config, error) {
 			return empty, fmt.Errorf("--timeout: %w", err)
 		}
 	}
+	if set["verbose"] {
+		c.Verbose = opts.verbose
+	}
 	if err := validate(&c); err != nil {
 		return empty, err
 	}
@@ -302,6 +307,11 @@ func parseFile(c *Config, data []byte, dir string) error {
 		c.Timeout, err = parseTimeout(v)
 		if err != nil {
 			return fmt.Errorf("timeout: %w", err)
+		}
+	}
+	if raw, ok := fields["verbose"]; ok {
+		if err := decodeYAML(raw, &c.Verbose); err != nil {
+			return fmt.Errorf("verbose: expected a boolean: %w", err)
 		}
 	}
 	return nil
@@ -398,9 +408,6 @@ func parseAgent(raw yaml.RawMessage, dir string) (AgentConfig, error) {
 		if _, ok := fields["command"]; ok {
 			return a, errors.New("command is only supported for custom agents")
 		}
-		if _, ok := fields["args"]; ok {
-			return a, errors.New("args are only supported for custom agents")
-		}
 		if a.Protocol == "" {
 			a.Protocol = defaultProtocol(a.Provider)
 		}
@@ -470,6 +477,11 @@ func validate(c *Config) error {
 		case (c.Agent.Provider == "claude" || c.Agent.Provider == "codex") && c.Agent.Protocol == "cli":
 		default:
 			return fmt.Errorf("unsupported agent/protocol combination %q/%q", c.Agent.Provider, c.Agent.Protocol)
+		}
+		for _, arg := range c.Agent.Args {
+			if arg == "--" {
+				return errors.New(`agent.args: "--" is not supported for built-in agents`)
+			}
 		}
 	}
 	return nil

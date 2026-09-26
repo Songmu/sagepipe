@@ -83,6 +83,66 @@ func TestDiagnosticsDoNotEchoToolRules(t *testing.T) {
 	}
 }
 
+func TestDiagnosticsHideLaunchArgumentsByDefault(t *testing.T) {
+	cfg := testConfig("map")
+	var out, diag strings.Builder
+	f := &fakeRunner{run: func(req agent.Request) (agent.Response, error) {
+		req.OnLaunch(agent.NewLaunch(
+			"copilot",
+			[]string{
+				"--disable-builtin-mcps",
+				"--disable-mcp-server=workiq",
+				"-p", "private prompt",
+				"--token=private-token",
+				"--api_key=private-api-key",
+				"--allowedTools", "private-tool", "other-tool",
+				"--allow-tool=private-policy",
+				"--model", "test-model",
+			},
+			"/tmp/project",
+		))
+		return agent.Response{Text: `{"items":["ok"]}`}, nil
+	}}
+	if code := Run(context.Background(), cfg, strings.NewReader("input\n"), &out, &diag, f); code != 0 {
+		t.Fatalf("exit code = %d, diagnostics: %s", code, diag.String())
+	}
+	if strings.Contains(diag.String(), "agent_process_starting") ||
+		strings.Contains(diag.String(), "private prompt") {
+		t.Fatalf("default diagnostics exposed launch arguments: %s", diag.String())
+	}
+}
+
+func TestVerboseDiagnosticsLogRawLaunchArguments(t *testing.T) {
+	cfg := testConfig("map")
+	cfg.Verbose = true
+	var out, diag strings.Builder
+	f := &fakeRunner{run: func(req agent.Request) (agent.Response, error) {
+		req.OnLaunch(agent.NewLaunch(
+			"copilot",
+			[]string{"--additional-mcp-config", `{"env":{"API_TOKEN":"private-token"}}`, "-p", "private prompt"},
+			"/tmp/project",
+		))
+		return agent.Response{Text: `{"items":["ok"]}`}, nil
+	}}
+	if code := Run(context.Background(), cfg, strings.NewReader("input\n"), &out, &diag, f); code != 0 {
+		t.Fatalf("exit code = %d, diagnostics: %s", code, diag.String())
+	}
+	for _, want := range []string{
+		`"level":"DEBUG"`,
+		`"code":"agent_process_starting"`,
+		`"command":"copilot"`,
+		`"--additional-mcp-config"`,
+		`API_TOKEN`,
+		`private-token`,
+		`private prompt`,
+		`"cwd":"/tmp/project"`,
+	} {
+		if !strings.Contains(diag.String(), want) {
+			t.Fatalf("verbose diagnostics missing %q: %s", want, diag.String())
+		}
+	}
+}
+
 func TestMapRejectsMultilineTextWithoutPartialOutput(t *testing.T) {
 	cfg := testConfig("map")
 	var out, diag strings.Builder
