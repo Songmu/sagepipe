@@ -127,11 +127,7 @@ func (r *runner) start(ctx context.Context, onLaunch func(agent.Launch)) error {
 		return errors.New("open ACP output pipe: failed")
 	}
 	if onLaunch != nil {
-		onLaunch(agent.Launch{
-			Command: r.command,
-			Args:    append([]string(nil), r.args...),
-			CWD:     r.cwd,
-		})
+		onLaunch(agent.NewLaunch(r.command, r.args, r.cwd))
 	}
 	if err := cmd.Start(); err != nil {
 		stdin.Close()

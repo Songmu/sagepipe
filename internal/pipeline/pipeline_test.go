@@ -87,19 +87,20 @@ func TestDiagnosticsLogLaunchArgumentsSafely(t *testing.T) {
 	cfg := testConfig("map")
 	var out, diag strings.Builder
 	f := &fakeRunner{run: func(req agent.Request) (agent.Response, error) {
-		req.OnLaunch(agent.Launch{
-			Command: "copilot",
-			Args: []string{
+		req.OnLaunch(agent.NewLaunch(
+			"copilot",
+			[]string{
 				"--disable-builtin-mcps",
 				"--disable-mcp-server=workiq",
 				"-p", "private prompt",
 				"--token=private-token",
+				"--api_key=private-api-key",
 				"--allowedTools", "private-tool", "other-tool",
 				"--allow-tool=private-policy",
 				"--model", "test-model",
 			},
-			CWD: "/tmp/project",
-		})
+			"/tmp/project",
+		))
 		return agent.Response{Text: `{"items":["ok"]}`}, nil
 	}}
 	if code := Run(context.Background(), cfg, strings.NewReader("input\n"), &out, &diag, f); code != 0 {
@@ -120,7 +121,9 @@ func TestDiagnosticsLogLaunchArgumentsSafely(t *testing.T) {
 			t.Fatalf("diagnostics missing %q: %s", want, logged)
 		}
 	}
-	for _, secret := range []string{"private prompt", "private-token", "private-tool", "other-tool", "private-policy"} {
+	for _, secret := range []string{
+		"private prompt", "private-token", "private-api-key", "private-tool", "other-tool", "private-policy",
+	} {
 		if strings.Contains(logged, secret) {
 			t.Fatalf("diagnostics exposed %q: %s", secret, logged)
 		}

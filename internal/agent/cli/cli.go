@@ -102,11 +102,7 @@ func Execute(
 	cmd.Stdout = stdoutWriter
 	cmd.Stderr = stderrWriter
 	if onLaunch != nil {
-		onLaunch(agent.Launch{
-			Command: opts.Program,
-			Args:    append([]string(nil), args...),
-			CWD:     opts.Dir,
-		})
+		onLaunch(agent.NewLaunch(opts.Program, args, opts.Dir))
 	}
 	if err := cmd.Start(); err != nil {
 		if ctx.Err() != nil {

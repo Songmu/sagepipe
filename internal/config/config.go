@@ -468,6 +468,11 @@ func validate(c *Config) error {
 		default:
 			return fmt.Errorf("unsupported agent/protocol combination %q/%q", c.Agent.Provider, c.Agent.Protocol)
 		}
+		for _, arg := range c.Agent.Args {
+			if arg == "--" {
+				return errors.New(`agent.args: "--" is not supported for built-in agents`)
+			}
+		}
 	}
 	return nil
 }

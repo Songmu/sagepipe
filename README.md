@@ -99,6 +99,9 @@ agent:
     - --disable-mcp-server=workiq
 ```
 
+Built-in agent arguments cannot contain a standalone `--`, because sagepipe
+appends required protocol and machine-readable output arguments after them.
+
 A custom ACP agent can be configured with a command and arguments:
 
 ```yaml

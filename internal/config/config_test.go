@@ -361,6 +361,8 @@ func TestParseRejectsInvalidOptions(t *testing.T) {
 		{"custom allowed tools cleared", "agent: {protocol: acp, command: my-agent}\nallowed-tools: Read", []string{"--allowed-tools="}, ""},
 		{"builtin custom command", "agent: {provider: copilot, command: custom}", nil, "command is only"},
 		{"builtin args", "agent: {provider: claude, args: [--verbose]}", nil, ""},
+		{"builtin end of options", "agent: {provider: copilot, args: [--]}", nil, `"--" is not supported`},
+		{"custom end of options", "agent: {protocol: acp, command: my-agent, args: [--]}", nil, ""},
 		{"bad agent name", "agent: invalid", nil, "unsupported provider"},
 		{"bad agent type", "agent: [copilot]", nil, "expected a provider"},
 		{"bad agent args type", "agent: {protocol: acp, command: custom, args: [12]}", nil, "args"},
