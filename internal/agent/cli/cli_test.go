@@ -179,8 +179,8 @@ func TestCopilotCLI(t *testing.T) {
 		t.Fatalf("unexpected response: %+v", resp)
 	}
 	first := captured(t, capturePath)
-	if first.Dir != opts.Dir || first.Marker != "inherited" || first.Prompt != "" ||
-		argValue(first.Args, "-p") != "short" || argValue(first.Args, "--model") != "test-model" ||
+	if first.Dir != opts.Dir || first.Marker != "inherited" || first.Prompt != "short" ||
+		slices.Contains(first.Args, "-p") || argValue(first.Args, "--model") != "test-model" ||
 		!slices.Contains(first.Args, "--allow-tool=shell(git status:*),read") ||
 		!slices.Contains(first.Args, "--disable-builtin-mcps") ||
 		!slices.Contains(first.Args, "--disable-mcp-server=workiq") ||
@@ -190,7 +190,9 @@ func TestCopilotCLI(t *testing.T) {
 
 	shortPrompt := "Output schema:\n" + safeSchema + "\nInput:\nshort"
 	resp, err = runner.Run(context.Background(), agent.Request{Prompt: shortPrompt, NativeSchema: []byte(safeSchema)})
-	if err != nil || len(resp.Warnings) != 1 || argValue(captured(t, capturePath).Args, "-p") != shortPrompt {
+	short := captured(t, capturePath)
+	if err != nil || len(resp.Warnings) != 1 ||
+		slices.Contains(short.Args, "-p") || short.Prompt != shortPrompt {
 		t.Fatalf("short schema fallback changed the prompt: %+v, %v", resp, err)
 	}
 

@@ -145,8 +145,10 @@ diagnostic with each subprocess command, raw arguments, and working directory.
 In `auto` mode, it also includes a `mode_reason` DEBUG diagnostic with the
 agent's unredacted rationale; the INFO `mode_selected` diagnostic retains a
 fixed, safe reason. Invalid-response details may contain raw agent output. Raw
-arguments, rationale, and agent output may contain prompts, input data, schemas,
-tool rules, or credentials; they are omitted by default and with `-v`.
+arguments may contain custom agent arguments, tool rules, or credentials;
+rationale and agent output may contain prompts, input data, or schemas. These
+details are omitted by default and with `-v`. Copilot CLI prompts are always
+sent through standard input and are not included in launch arguments.
 
 > [!WARNING]
 > Enable DEBUG diagnostics only in trusted environments. Prefer environment

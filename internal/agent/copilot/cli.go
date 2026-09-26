@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"strings"
 	"unicode/utf8"
 
@@ -50,12 +49,7 @@ func (r *CLIRunner) Run(ctx context.Context, req agent.Request) (agent.Response,
 		}
 		args = append(args, "--allow-tool="+tools)
 	}
-	var stdin io.Reader
-	if len(req.Prompt) > 8<<10 {
-		stdin = strings.NewReader(req.Prompt)
-	} else {
-		args = append(args, "-p", req.Prompt)
-	}
+	stdin := strings.NewReader(req.Prompt)
 	var final string
 	var seenResult, seenMessage bool
 	err := cli.Execute(ctx, "Copilot", r.options, args, stdin, req.OnLaunch, func(line []byte) error {
