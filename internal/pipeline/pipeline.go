@@ -53,6 +53,7 @@ type readResult struct {
 
 // Run processes a stream and returns 0 for success, 1 for completed runs with
 // rejected input records, or 2 for failures that prevent completing the run.
+// With IgnoreFailures, any successfully written output record makes the exit status 0.
 func Run(ctx context.Context, cfg config.Config, in io.Reader, out, errOut io.Writer, runner agent.Runner) (status int) {
 	p := &processor{
 		ctx:          ctx,
@@ -118,6 +119,9 @@ func compileSchema(spec config.SchemaSpec) (*schema.Document, error) {
 func (p *processor) finish(status int) int {
 	if status == 0 && p.failures != 0 {
 		status = 1
+	}
+	if p.cfg.IgnoreFailures && p.outputs > 0 {
+		status = 0
 	}
 	p.diag.log(slog.LevelInfo, "summary", "complete", "Processing finished", 0,
 		"failures", p.failures, "outputs", p.outputs, "retries", p.retries.Load(),

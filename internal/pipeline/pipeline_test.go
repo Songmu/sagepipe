@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -68,6 +69,91 @@ func TestMapRejectsWholeInvalidAnswerAndContinues(t *testing.T) {
 	if strings.Count(diag.String(), `"reason":"invalid_output"`) != 2 {
 		t.Errorf("invalid output was not retried twice: %s", diag.String())
 	}
+}
+
+func TestIgnoreFailuresRequiresWrittenOutput(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		input      io.Reader
+		wantOutput string
+		wantCode   int
+		wantError  string
+	}{
+		{"mixed results", strings.NewReader("good\nbad\n"), "ok\n", 0, "invalid_response"},
+		{"all failed", strings.NewReader("bad\n"), "", 1, "invalid_response"},
+		{"empty valid result then failure", strings.NewReader("empty\nbad\n"), "", 1, "invalid_response"},
+		{"input error before output", brokenReader{}, "", 2, "input_read_failed"},
+		{"input error after output", io.MultiReader(strings.NewReader("good\n"), brokenReader{}), "ok\n", 0, "input_read_failed"},
+		{"all successful", strings.NewReader("good\n"), "ok\n", 0, ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := testConfig("map")
+			cfg.IgnoreFailures = true
+			cfg.Verbosity = 1
+			var out, diag strings.Builder
+			f := &fakeRunner{run: func(req agent.Request) (agent.Response, error) {
+				switch {
+				case strings.Contains(req.Prompt, `"good"`):
+					return agent.Response{Text: `{"items":["ok"]}`}, nil
+				case strings.Contains(req.Prompt, `"empty"`):
+					return agent.Response{Text: `{"items":[]}`}, nil
+				default:
+					return agent.Response{Text: `{"items":[4]}`}, nil
+				}
+			}}
+			if code := Run(context.Background(), cfg, tt.input, &out, &diag, f); code != tt.wantCode {
+				t.Fatalf("exit code = %d, want %d; diagnostics: %s", code, tt.wantCode, diag.String())
+			}
+			if out.String() != tt.wantOutput {
+				t.Errorf("stdout = %q, want %q", out.String(), tt.wantOutput)
+			}
+			if !strings.Contains(diag.String(), fmt.Sprintf(`"exit_code":%d`, tt.wantCode)) {
+				t.Errorf("summary exit code does not match return value: %s", diag.String())
+			}
+			if tt.wantError != "" {
+				checkDiagnostic(t, diag.String(), tt.wantError, 0)
+			}
+		})
+	}
+}
+
+func TestIgnoreFailuresReduceAndConcurrentMap(t *testing.T) {
+	t.Run("reduce with rejected input", func(t *testing.T) {
+		cfg := testConfig("reduce")
+		cfg.IgnoreFailures = true
+		cfg.InputSchema = config.SchemaSpec{Present: true, JSON: []byte(`{"type":"integer"}`), BaseURI: "file:///tmp/sagepipe-input.json"}
+		var out, diag strings.Builder
+		f := &fakeRunner{run: func(agent.Request) (agent.Response, error) {
+			return agent.Response{Text: `{"items":["ok"]}`}, nil
+		}}
+		if code := Run(context.Background(), cfg, strings.NewReader("1\nbad\n"), &out, &diag, f); code != 0 {
+			t.Fatalf("exit code = %d, diagnostics: %s", code, diag.String())
+		}
+		if out.String() != "ok\n" {
+			t.Errorf("stdout = %q", out.String())
+		}
+		checkDiagnostic(t, diag.String(), "invalid_json", 2)
+	})
+
+	t.Run("concurrent map with failed record", func(t *testing.T) {
+		cfg := testConfig("map")
+		cfg.IgnoreFailures = true
+		cfg.Concurrency = 2
+		var out, diag strings.Builder
+		runner := &parallelRunner{run: func(_ context.Context, req agent.Request) (agent.Response, error) {
+			if strings.Contains(req.Prompt, `"bad"`) {
+				return agent.Response{}, errors.New("agent failed")
+			}
+			return agent.Response{Text: `{"items":["ok"]}`}, nil
+		}}
+		if code := Run(context.Background(), cfg, strings.NewReader("bad\ngood\n"), &out, &diag, runner); code != 0 {
+			t.Fatalf("exit code = %d, diagnostics: %s", code, diag.String())
+		}
+		if out.String() != "ok\n" {
+			t.Errorf("stdout = %q", out.String())
+		}
+		checkDiagnostic(t, diag.String(), "agent_call_failed", 1)
+	})
 }
 
 func TestMapRetriesEmptyResponseTwice(t *testing.T) {
@@ -1181,6 +1267,19 @@ type brokenWriter struct{}
 
 func (brokenWriter) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
 
+type failSecondWriteWriter struct {
+	output strings.Builder
+	writes int
+}
+
+func (w *failSecondWriteWriter) Write(p []byte) (int, error) {
+	w.writes++
+	if w.writes == 2 {
+		return 0, io.ErrClosedPipe
+	}
+	return w.output.Write(p)
+}
+
 type brokenReader struct{}
 
 func (brokenReader) Read([]byte) (int, error) { return 0, io.ErrClosedPipe }
@@ -1288,6 +1387,23 @@ func TestOutputWriteFailureIsFatal(t *testing.T) {
 	}}
 	if code := Run(context.Background(), cfg, strings.NewReader("hello\n"), brokenWriter{}, &diag, f); code != 2 {
 		t.Fatalf("exit code = %d, want 2; diagnostics: %s", code, diag.String())
+	}
+	checkDiagnostic(t, diag.String(), "output_write_failed", 0)
+}
+
+func TestIgnoreFailuresAfterOutputWriteFailure(t *testing.T) {
+	cfg := testConfig("map")
+	cfg.IgnoreFailures = true
+	var out failSecondWriteWriter
+	var diag strings.Builder
+	f := &fakeRunner{run: func(agent.Request) (agent.Response, error) {
+		return agent.Response{Text: `{"items":["ok"]}`}, nil
+	}}
+	if code := Run(context.Background(), cfg, strings.NewReader("one\ntwo\n"), &out, &diag, f); code != 0 {
+		t.Fatalf("exit code = %d, diagnostics: %s", code, diag.String())
+	}
+	if out.output.String() != "ok\n" {
+		t.Errorf("stdout = %q", out.output.String())
 	}
 	checkDiagnostic(t, diag.String(), "output_write_failed", 0)
 }
