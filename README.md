@@ -162,9 +162,12 @@ The selected agent's generation-time schema support is only a hint; every
 result is also validated locally.
 
 Configuration-relative paths resolve from the configuration file's directory.
-`-C <dir>` changes the effective working directory and the base for a
-relative `--config` path. Other relative CLI paths resolve from the effective
-working directory; `--agent-cwd` changes only the agent's working directory.
+`-C <dir>` and `--cwd <dir>` change the sagepipe process's working directory
+and the base for a relative `--config` path. Other relative CLI paths resolve
+from that directory. The agent inherits it only when `agent.cwd` is unset;
+`agent.cwd` or `--agent-cwd` changes only the agent's working directory. A
+relative `--agent-cwd` value is passed through relative to the changed process
+directory, while configuration-file `agent.cwd` remains configuration-relative.
 
 | Flag | Default | Effect |
 | --- | --- | --- |
@@ -176,7 +179,8 @@ working directory; `--agent-cwd` changes only the agent's working directory.
 | `--max-response-bytes` | 8,388,608 | Maximum final answer per agent call |
 | `--timeout` | None | Deadline for each agent call, including auto-mode selection |
 | `--verbose` | Disabled | Include DEBUG diagnostics such as raw agent launch arguments |
-| `-C`, `--agent-cwd` | Invoking directory, then effective `cwd` | Set filter and agent directories |
+| `-C`, `--cwd` | Invoking directory | Set the sagepipe process directory |
+| `--agent-cwd` | Effective `cwd` | Set only the agent directory |
 
 Limits can also be set in frontmatter as `max_line_bytes`,
 `max_input_bytes`, `max_response_bytes`, and `timeout`. An oversized

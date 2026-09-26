@@ -47,6 +47,10 @@ func Run(ctx context.Context, argv []string, outStream, errStream io.Writer) err
 		pipeline.ReportError(errStream, "invalid_config", "config", err.Error())
 		return exitError(2)
 	}
+	if err := os.Chdir(cfg.CWD); err != nil {
+		pipeline.ReportError(errStream, "working_directory_failed", "startup", "Could not change working directory")
+		return exitError(2)
+	}
 	runner, err := factory.New(cfg)
 	if err != nil {
 		pipeline.ReportError(errStream, "agent_start_failed", "agent", err.Error())

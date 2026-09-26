@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -83,11 +82,6 @@ func New(opts Options) (agent.Runner, error) {
 		if err != nil {
 			return nil, errors.New("determine ACP working directory: failed")
 		}
-	}
-	var err error
-	cwd, err = filepath.Abs(cwd)
-	if err != nil {
-		return nil, errors.New("resolve ACP working directory: failed")
 	}
 	info, err := os.Stat(cwd)
 	if err != nil || !info.IsDir() {

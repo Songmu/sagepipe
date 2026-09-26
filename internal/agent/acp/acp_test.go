@@ -314,6 +314,36 @@ func TestNewAndCloseWithoutRunDoNotLaunchAgent(t *testing.T) {
 	}
 }
 
+func TestNewPreservesRelativeCWD(t *testing.T) {
+	startupCWD, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := os.Chdir(startupCWD); err != nil {
+			t.Errorf("restore working directory: %v", err)
+		}
+	}()
+
+	base := t.TempDir()
+	if err := os.Mkdir(filepath.Join(base, "relative"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(base); err != nil {
+		t.Fatal(err)
+	}
+	r, err := New(Options{Command: os.Args[0], CWD: "relative"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := r.(*runner).cwd; got != "relative" {
+		t.Fatalf("cwd = %q, want relative", got)
+	}
+	if err := r.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestCancelledFirstRunDoesNotLaunchAgent(t *testing.T) {
 	opts := mockOptions(t)
 	marker := filepath.Join(opts.CWD, "launched")

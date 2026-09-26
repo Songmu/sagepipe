@@ -145,7 +145,7 @@ Original prompt.
 			check: func(t *testing.T, c Config) {
 				t.Helper()
 				if c.CWD != project || !reflect.DeepEqual(c.Agent, AgentConfig{
-					Provider: "claude", Protocol: "cli", Model: "replacement", CWD: overrideDir,
+					Provider: "claude", Protocol: "cli", Model: "replacement", CWD: "./override",
 				}) || c.AllowedTools != "" || c.Prompt != "" || c.Mode != "reduce" ||
 					c.Timeout != 3*time.Second || c.Verbose {
 					t.Fatalf("unexpected overrides: %+v", c)
@@ -177,8 +177,20 @@ Original prompt.
 		if c.CWD != project {
 			t.Fatalf("C should override file cwd: %s", c.CWD)
 		}
+		if c.Agent.CWD != agentDir {
+			t.Fatalf("C should not override explicit agent cwd: %s", c.Agent.CWD)
+		}
 		if c.OutputSchema.BaseURI != directoryURI(project) {
 			t.Fatalf("inline schema refs stay relative to file: %s", c.OutputSchema.BaseURI)
+		}
+	})
+	t.Run("long cwd flag", func(t *testing.T) {
+		c, err := Parse([]string{"--cwd", "project"}, root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.CWD != project || c.Agent.CWD != project {
+			t.Fatalf("--cwd should set cwd and the inherited agent cwd: %+v", c)
 		}
 	})
 	t.Run("file URI escapes directory names", func(t *testing.T) {
@@ -404,6 +416,8 @@ func TestParseRejectsInvalidOptions(t *testing.T) {
 		{"missing C", "", []string{"-C", "missing"}, "-C"},
 		{"C is file", "", []string{"-C", "file"}, "not a directory"},
 		{"empty C", "", []string{"-C="}, "-C"},
+		{"missing cwd", "", []string{"--cwd", "missing"}, "--cwd"},
+		{"empty cwd", "", []string{"--cwd="}, "--cwd"},
 		{"empty config", "", []string{"--config="}, "--config"},
 		{"empty agent cwd", "", []string{"--agent-cwd="}, "--agent-cwd"},
 		{"empty model", "", []string{"--model="}, "--model"},
@@ -493,7 +507,7 @@ func TestUsage(t *testing.T) {
 	if !strings.HasPrefix(usage, "Usage: sagepipe [options] < stdin > stdout\n\nOptions:\n") {
 		t.Fatalf("unexpected usage header: %q", usage)
 	}
-	for _, name := range []string{"-C", "-h", "--help", "--config", "--agent", "--input-schema", "--output-schema"} {
+	for _, name := range []string{"-C", "--cwd", "-h", "--help", "--config", "--agent", "--input-schema", "--output-schema"} {
 		if !strings.Contains(usage, "  "+name+" ") {
 			t.Errorf("usage omits %s: %s", name, usage)
 		}

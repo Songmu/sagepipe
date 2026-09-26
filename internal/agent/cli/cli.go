@@ -11,7 +11,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -42,7 +41,7 @@ type Options struct {
 	MaxOutputBytes int64
 }
 
-// Prepare supplies product defaults and pins an explicit absolute working directory.
+// Prepare supplies product defaults while preserving an explicitly provided directory.
 func (o Options) Prepare(defaultProgram string) (Options, error) {
 	if o.Program == "" {
 		o.Program = defaultProgram
@@ -54,11 +53,6 @@ func (o Options) Prepare(defaultProgram string) (Options, error) {
 			return Options{}, errors.New("CLI: cannot determine working directory")
 		}
 	}
-	dir, err := filepath.Abs(o.Dir)
-	if err != nil {
-		return Options{}, errors.New("CLI: invalid working directory")
-	}
-	o.Dir = dir
 	if o.MaxOutputBytes == 0 {
 		o.MaxOutputBytes = defaultOutputBytes
 	}
