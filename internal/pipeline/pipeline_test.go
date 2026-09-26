@@ -1280,6 +1280,22 @@ func (w *failSecondWriteWriter) Write(p []byte) (int, error) {
 	return w.output.Write(p)
 }
 
+type partialOutputWriter struct {
+	output strings.Builder
+	chunks []int
+	writes int
+}
+
+func (w *partialOutputWriter) Write(p []byte) (int, error) {
+	n := w.chunks[w.writes]
+	w.writes++
+	_, _ = w.output.Write(p[:n])
+	if w.writes == len(w.chunks) {
+		return n, io.ErrClosedPipe
+	}
+	return n, nil
+}
+
 type brokenReader struct{}
 
 func (brokenReader) Read([]byte) (int, error) { return 0, io.ErrClosedPipe }
@@ -1406,6 +1422,43 @@ func TestIgnoreFailuresAfterOutputWriteFailure(t *testing.T) {
 		t.Errorf("stdout = %q", out.output.String())
 	}
 	checkDiagnostic(t, diag.String(), "output_write_failed", 0)
+}
+
+func TestIgnoreFailuresCountsCompleteRecordsOnPartialWrite(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		chunks     []int
+		wantOutput string
+		wantCode   int
+		wantCount  int
+	}{
+		{"incomplete first record", []int{3}, "one", 2, 0},
+		{"one record and error", []int{4}, "one\n", 0, 1},
+		{"one record split across writes", []int{2, 2}, "one\n", 0, 1},
+		{"one record and partial second", []int{6}, "one\ntw", 0, 1},
+		{"two records and error", []int{8}, "one\ntwo\n", 0, 2},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := testConfig("map")
+			cfg.IgnoreFailures = true
+			cfg.Verbosity = 1
+			out := &partialOutputWriter{chunks: tt.chunks}
+			var diag strings.Builder
+			f := &fakeRunner{run: func(agent.Request) (agent.Response, error) {
+				return agent.Response{Text: `{"items":["one","two"]}`}, nil
+			}}
+			if code := Run(context.Background(), cfg, strings.NewReader("input\n"), out, &diag, f); code != tt.wantCode {
+				t.Fatalf("exit code = %d, want %d; diagnostics: %s", code, tt.wantCode, diag.String())
+			}
+			if out.output.String() != tt.wantOutput {
+				t.Errorf("stdout = %q, want %q", out.output.String(), tt.wantOutput)
+			}
+			if !strings.Contains(diag.String(), fmt.Sprintf(`"outputs":%d`, tt.wantCount)) {
+				t.Errorf("summary output count differs from complete records: %s", diag.String())
+			}
+			checkDiagnostic(t, diag.String(), "output_write_failed", 0)
+		})
+	}
 }
 
 func TestEmptyAnswerDoesNotWriteToOutput(t *testing.T) {

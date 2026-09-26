@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -255,7 +256,9 @@ func (p *processor) processMap(rec record) error {
 }
 
 func (p *processor) emit(payload []byte, count int) error {
-	if err := writeOutput(p.output, payload); err != nil {
+	written, err := writeOutput(p.output, payload)
+	if err != nil {
+		p.outputs += written
 		p.diag.log(slog.LevelError, "output_write_failed", "output", "Could not write standard output", 0)
 		return err
 	}
@@ -462,16 +465,20 @@ func (p *processor) reportInputFailure(err error) {
 	p.diag.log(slog.LevelError, code, "input", message, 0)
 }
 
-func writeOutput(w io.Writer, payload []byte) error {
+func writeOutput(w io.Writer, payload []byte) (int, error) {
+	written := 0
 	for len(payload) != 0 {
 		n, err := w.Write(payload)
+		if n > 0 && n <= len(payload) {
+			written += bytes.Count(payload[:n], []byte{'\n'})
+		}
 		if err != nil {
-			return err
+			return written, err
 		}
 		if n <= 0 || n > len(payload) {
-			return io.ErrShortWrite
+			return written, io.ErrShortWrite
 		}
 		payload = payload[n:]
 	}
-	return nil
+	return written, nil
 }
