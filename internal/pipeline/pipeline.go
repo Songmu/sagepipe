@@ -58,7 +58,7 @@ func Run(ctx context.Context, cfg config.Config, in io.Reader, out, errOut io.Wr
 		readRequests: make(chan readRequest),
 		readDone:     make(chan struct{}),
 		output:       out,
-		diag:         newDiagnostics(errOut, cfg.Verbose),
+		diag:         newDiagnostics(errOut, cfg.Verbosity),
 		runner:       runner,
 	}
 	defer func() {

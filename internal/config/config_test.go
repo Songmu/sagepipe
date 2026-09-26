@@ -54,7 +54,7 @@ func TestParseDefaultsAndPrompt(t *testing.T) {
 			if c.CWD != root || !reflect.DeepEqual(c.Agent, AgentConfig{Provider: "copilot", Protocol: "acp", CWD: root}) ||
 				c.Mode != "auto" || c.Prompt != tt.wantPrompt || c.AllowedTools != "" ||
 				c.InputSchema.Present || c.OutputSchema.Present || c.Timeout != 0 ||
-				c.Verbose ||
+				c.Verbosity != 0 ||
 				c.MaxInputBytes != 65536 || c.MaxLineBytes != 1048576 || c.MaxResponseBytes != 8388608 {
 				t.Fatalf("unexpected defaults: %+v", c)
 			}
@@ -64,6 +64,41 @@ func TestParseDefaultsAndPrompt(t *testing.T) {
 	c, err := Parse([]string{"--config", "windows.md"}, root)
 	if err != nil || c.Mode != "map" || c.Prompt != "Prompt\r\n" {
 		t.Fatalf("CRLF frontmatter and prompt: %+v, %v", c, err)
+	}
+}
+
+func TestParseVerbosity(t *testing.T) {
+	root := t.TempDir()
+	for _, tt := range []struct {
+		name string
+		args []string
+		want int
+	}{
+		{"default", nil, 0},
+		{"short", []string{"-v"}, 1},
+		{"long", []string{"--verbose"}, 1},
+		{"repeated", []string{"-v", "--verbose"}, 2},
+		{"grouped", []string{"-vv"}, 2},
+		{"grouped and repeated", []string{"-vv", "-v"}, 3},
+		{"longer group", []string{"-vvv"}, 3},
+		{"explicit false", []string{"-v", "--verbose=false"}, 0},
+		{"option value", []string{"--prompt", "-vv"}, 0},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := Parse(tt.args, root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.Verbosity != tt.want {
+				t.Fatalf("verbosity = %d, want %d", cfg.Verbosity, tt.want)
+			}
+			if tt.name == "option value" && cfg.Prompt != "-vv" {
+				t.Fatalf("prompt = %q, want -vv", cfg.Prompt)
+			}
+		})
+	}
+	if _, err := Parse([]string{"-vx"}, root); err == nil {
+		t.Fatal("unexpected combined flag was accepted")
 	}
 }
 
@@ -94,7 +129,6 @@ max_input_bytes: 128
 max_line_bytes: 256
 max_response_bytes: 512
 timeout: 2m
-verbose: true
 concurrency: [invalid, but, ignored]
 ---
 
@@ -115,7 +149,7 @@ Original prompt.
 					!reflect.DeepEqual(c.Agent.Args, []string{"--disable-builtin-mcps", "--disable-mcp-server=workiq"}) ||
 					c.AllowedTools != "Read Grep" || c.Prompt != "\nOriginal prompt.\n" ||
 					c.MaxInputBytes != 128 || c.MaxLineBytes != 256 || c.MaxResponseBytes != 512 ||
-					c.Timeout != 2*time.Minute || !c.Verbose {
+					c.Timeout != 2*time.Minute || c.Verbosity != 0 {
 					t.Fatalf("unexpected file settings: %+v", c)
 				}
 				if !reflect.DeepEqual(c.InputSchema, SchemaSpec{Present: true, Path: filepath.Join(project, "input.json")}) {
@@ -139,7 +173,7 @@ Original prompt.
 				"--agent", "claude", "--model", "replacement",
 				"--agent-cwd", "./override", "--allowed-tools=",
 				"--prompt=", "--mode", "reduce", "--timeout", "3s",
-				"--verbose=false",
+				"-vv",
 				"--input-schema", "./true", "--output-schema", ` {"$ref":"schema.json"} `,
 			},
 			check: func(t *testing.T, c Config) {
@@ -147,7 +181,7 @@ Original prompt.
 				if c.CWD != project || !reflect.DeepEqual(c.Agent, AgentConfig{
 					Provider: "claude", Protocol: "cli", Model: "replacement", CWD: "./override",
 				}) || c.AllowedTools != "" || c.Prompt != "" || c.Mode != "reduce" ||
-					c.Timeout != 3*time.Second || c.Verbose {
+					c.Timeout != 3*time.Second || c.Verbosity != 2 {
 					t.Fatalf("unexpected overrides: %+v", c)
 				}
 				if c.InputSchema.Path != filepath.Join(project, "true") ||
@@ -406,7 +440,6 @@ func TestParseRejectsInvalidOptions(t *testing.T) {
 		{"timeout zero file", "timeout: 0s", nil, "must be positive"},
 		{"timeout negative flag", "", []string{"--timeout=-1s"}, "must be positive"},
 		{"timeout empty flag", "", []string{"--timeout="}, "invalid duration"},
-		{"verbose type", "verbose: enabled", nil, "verbose: expected a boolean"},
 		{"bad schema array", "input_schema: [string]", nil, "expected a schema object"},
 		{"bad schema null", "output_schema: null", nil, "expected a schema object"},
 		{"bad schema number", "output_schema: 42", nil, "expected a schema object"},

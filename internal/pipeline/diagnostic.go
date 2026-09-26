@@ -10,10 +10,13 @@ type diagnostics struct {
 	logger *slog.Logger
 }
 
-func newDiagnostics(w io.Writer, verbose bool) *diagnostics {
-	level := slog.LevelInfo
-	if verbose {
+func newDiagnostics(w io.Writer, verbosity int) *diagnostics {
+	level := slog.LevelWarn
+	switch {
+	case verbosity >= 2:
 		level = slog.LevelDebug
+	case verbosity == 1:
+		level = slog.LevelInfo
 	}
 	handler := slog.NewJSONHandler(w, &slog.HandlerOptions{
 		Level: level,
@@ -38,5 +41,5 @@ func (d *diagnostics) log(level slog.Level, code, stage, message string, line in
 
 // ReportError emits a configuration or startup error before the pipeline starts.
 func ReportError(w io.Writer, code, stage, message string) {
-	newDiagnostics(w, false).log(slog.LevelError, code, stage, message, 0)
+	newDiagnostics(w, 0).log(slog.LevelError, code, stage, message, 0)
 }

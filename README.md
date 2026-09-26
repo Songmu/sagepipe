@@ -82,6 +82,8 @@ Exit status is `0` on success, `1` after completing input with rejected
 records, and `2` for failures that prevent completing the run. Standard
 error contains JSONL diagnostics with `level`, `code`, `stage`, and `message`;
 input-specific diagnostics also include the one-based physical `line`.
+By default, only WARN and ERROR diagnostics are emitted. `-v` adds INFO
+diagnostics; `-vv` (or repeating `--verbose`) also adds DEBUG diagnostics.
 
 ## Agents and permissions
 
@@ -112,15 +114,15 @@ agent:
   cwd: ./agent-project
 ```
 
-`--verbose` or `verbose: true` includes an `agent_process_starting` DEBUG
+`-vv` includes an `agent_process_starting` DEBUG
 diagnostic with each subprocess command, raw arguments, and working directory.
 These arguments may contain prompts, schemas, tool rules, or credentials; they
-are omitted by default and are not redacted in verbose diagnostics.
+are omitted by default and with `-v`, and are not redacted in DEBUG diagnostics.
 
 > [!WARNING]
-> Enable verbose diagnostics only in trusted environments. Prefer environment
+> Enable DEBUG diagnostics only in trusted environments. Prefer environment
 > variables or protected files over command-line arguments for sensitive data.
-> Before running with `--verbose` in CI, register every sensitive value with the
+> Before running with `-vv` in CI, register every sensitive value with the
 > CI system's log-masking mechanism. In GitHub Actions, emit
 > `::add-mask::{value}` before any command can print that value:
 >
@@ -178,7 +180,7 @@ directory, while configuration-file `agent.cwd` remains configuration-relative.
 | `--max-input-bytes` | 65,536 | Maximum total raw input in `reduce` |
 | `--max-response-bytes` | 8,388,608 | Maximum final answer per agent call |
 | `--timeout` | None | Deadline for each agent call, including auto-mode selection |
-| `--verbose` | Disabled | Include DEBUG diagnostics such as raw agent launch arguments |
+| `-v`, `--verbose` | WARN diagnostics | Show INFO diagnostics; repeat (`-vv`) for DEBUG diagnostics including raw agent launch arguments |
 | `-C`, `--cwd` | Invoking directory | Set the sagepipe process directory |
 | `--agent-cwd` | Effective `cwd` | Set only the agent directory |
 

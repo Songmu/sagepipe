@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -38,7 +39,7 @@ type Config struct {
 	InputSchema, OutputSchema                     SchemaSpec
 	MaxInputBytes, MaxLineBytes, MaxResponseBytes int64
 	Timeout                                       time.Duration
-	Verbose                                       bool
+	Verbosity                                     int
 }
 
 type flagOptions struct {
@@ -46,8 +47,36 @@ type flagOptions struct {
 	mode, prompt, allowedTools, inputSchema, outputSchema   string
 	timeout                                                 string
 	maxInputBytes, maxLineBytes, maxResponseBytes           int64
-	help, verbose                                           bool
+	verbosity                                               int
+	help                                                    bool
 }
+
+type verbosityFlag struct {
+	count *int
+	step  int
+}
+
+func (v verbosityFlag) String() string {
+	if v.count == nil {
+		return "0"
+	}
+	return strconv.Itoa(*v.count)
+}
+
+func (v verbosityFlag) Set(value string) error {
+	enabled, err := strconv.ParseBool(value)
+	if err != nil {
+		return err
+	}
+	if enabled {
+		*v.count += v.step
+	} else {
+		*v.count = 0
+	}
+	return nil
+}
+
+func (verbosityFlag) IsBoolFlag() bool { return true }
 
 func newFlagSet(o *flagOptions) *flag.FlagSet {
 	fs := flag.NewFlagSet("sagepipe", flag.ContinueOnError)
@@ -68,7 +97,9 @@ func newFlagSet(o *flagOptions) *flag.FlagSet {
 	fs.Int64Var(&o.maxLineBytes, "max-line-bytes", 0, "maximum map line bytes")
 	fs.Int64Var(&o.maxResponseBytes, "max-response-bytes", 0, "maximum response bytes")
 	fs.StringVar(&o.timeout, "timeout", "", "agent call timeout")
-	fs.BoolVar(&o.verbose, "verbose", false, "include debug diagnostics")
+	const verboseDescription = "include INFO diagnostics; repeat for DEBUG"
+	fs.Var(verbosityFlag{&o.verbosity, 1}, "v", verboseDescription)
+	fs.Var(verbosityFlag{&o.verbosity, 1}, "verbose", verboseDescription)
 	const helpDescription = "display usage"
 	fs.BoolVar(&o.help, "h", false, helpDescription)
 	fs.BoolVar(&o.help, "help", false, helpDescription)
@@ -108,6 +139,12 @@ func Parse(argv []string, startupCWD string) (Config, error) {
 
 	var opts flagOptions
 	fs := newFlagSet(&opts)
+	for _, arg := range argv {
+		name, _, _ := strings.Cut(strings.TrimPrefix(arg, "-"), "=")
+		if len(name) > 1 && strings.Trim(name, "v") == "" && fs.Lookup(name) == nil {
+			fs.Var(verbosityFlag{&opts.verbosity, len(name)}, name, "")
+		}
+	}
 	if err := fs.Parse(argv); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return empty, flag.ErrHelp
@@ -130,6 +167,7 @@ func Parse(argv []string, startupCWD string) (Config, error) {
 		MaxInputBytes:    65536,
 		MaxLineBytes:     1048576,
 		MaxResponseBytes: 8388608,
+		Verbosity:        opts.verbosity,
 	}
 	cwdFlag := ""
 	if set["C"] {
@@ -227,9 +265,6 @@ func Parse(argv []string, startupCWD string) (Config, error) {
 			return empty, fmt.Errorf("--timeout: %w", err)
 		}
 	}
-	if set["verbose"] {
-		c.Verbose = opts.verbose
-	}
 	if err := validate(&c); err != nil {
 		return empty, err
 	}
@@ -315,11 +350,6 @@ func parseFile(c *Config, data []byte, dir string) error {
 		c.Timeout, err = parseTimeout(v)
 		if err != nil {
 			return fmt.Errorf("timeout: %w", err)
-		}
-	}
-	if raw, ok := fields["verbose"]; ok {
-		if err := decodeYAML(raw, &c.Verbose); err != nil {
-			return fmt.Errorf("verbose: expected a boolean: %w", err)
 		}
 	}
 	return nil
