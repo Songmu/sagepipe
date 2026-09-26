@@ -173,7 +173,9 @@ func TestCopilotCLI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resp.Text != "answer" || resp.Usage != nil {
+	if resp.Text != "answer" || resp.Usage != nil ||
+		resp.Model == nil ||
+		*resp.Model != (agent.Model{ID: "test-model", Source: agent.ModelSourceExplicit}) {
 		t.Fatalf("unexpected response: %+v", resp)
 	}
 	first := captured(t, capturePath)
@@ -223,7 +225,9 @@ func TestClaudeCLI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resp.Text != `{"items":["answer"]}` || len(resp.Warnings) != 0 || resp.Usage == nil || resp.Usage.CachedInputTokens != 2 {
+	if resp.Text != `{"items":["answer"]}` || len(resp.Warnings) != 0 || resp.Usage == nil ||
+		resp.Usage.CachedInputTokens != 2 ||
+		resp.Model == nil || *resp.Model != (agent.Model{ID: "model", Source: agent.ModelSourceExplicit}) {
 		t.Fatalf("unexpected response: %+v", resp)
 	}
 	capture := captured(t, capturePath)
@@ -265,7 +269,8 @@ func TestCodexCLIAndSchemaCleanup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resp.Text != "answer" || resp.Usage == nil || resp.Usage.CachedInputTokens != 2 {
+	if resp.Text != "answer" || resp.Usage == nil || resp.Usage.CachedInputTokens != 2 ||
+		resp.Model == nil || *resp.Model != (agent.Model{ID: "model", Source: agent.ModelSourceExplicit}) {
 		t.Fatalf("unexpected response: %+v", resp)
 	}
 	capture := captured(t, capturePath)

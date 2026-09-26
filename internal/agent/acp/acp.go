@@ -282,6 +282,7 @@ func (r *runner) Run(ctx context.Context, request agent.Request) (response agent
 		return agent.Response{}, errors.New("ACP agent returned an empty session ID")
 	}
 	sessionReady <- session.SessionId
+	response.Model = currentModel(session.ConfigOptions)
 	if r.closeSessions {
 		defer func() {
 			// A cancelled connection is being torn down by watch; there is no
@@ -299,17 +300,20 @@ func (r *runner) Run(ctx context.Context, request agent.Request) (response agent
 	}
 
 	if r.model != "" {
-		id, value, ok := modelOption(session.ConfigOptions, r.model)
+		id, choice, ok := modelOption(session.ConfigOptions, r.model)
 		if !ok {
 			return agent.Response{}, errors.New("ACP agent does not offer the requested model")
 		}
 		_, err = r.conn.SetSessionConfigOption(runCtx, sdk.SetSessionConfigOptionRequest{
 			ValueId: &sdk.SetSessionConfigOptionValueId{
-				SessionId: session.SessionId, ConfigId: id, Value: value,
+				SessionId: session.SessionId, ConfigId: id, Value: choice.Value,
 			},
 		})
 		if err != nil {
 			return agent.Response{}, r.rpcError(ctx, runCtx, "select ACP model")
+		}
+		response.Model = &agent.Model{
+			ID: string(choice.Value), Name: choice.Name, Source: agent.ModelSourceExplicit,
 		}
 	}
 
@@ -336,7 +340,7 @@ func (r *runner) Run(ctx context.Context, request agent.Request) (response agent
 	if chunks == 0 || text == "" {
 		return agent.Response{}, fmt.Errorf("ACP: %w", agent.ErrNoTextResponse)
 	}
-	response = agent.Response{Text: text}
+	response.Text = text
 	if result.Usage != nil {
 		response.Usage = &agent.Usage{
 			InputTokens: int64(result.Usage.InputTokens), OutputTokens: int64(result.Usage.OutputTokens),
@@ -351,7 +355,9 @@ func (r *runner) Run(ctx context.Context, request agent.Request) (response agent
 	return response, nil
 }
 
-func modelOption(options []sdk.SessionConfigOption, model string) (sdk.SessionConfigId, sdk.SessionConfigValueId, bool) {
+func modelOption(
+	options []sdk.SessionConfigOption, model string,
+) (sdk.SessionConfigId, sdk.SessionConfigSelectOption, bool) {
 	for _, option := range options {
 		selectOption := option.Select
 		if selectOption == nil {
@@ -362,28 +368,62 @@ func modelOption(options []sdk.SessionConfigOption, model string) (sdk.SessionCo
 			continue
 		}
 		if selectOption.Options.Ungrouped != nil {
-			if value, ok := modelChoice(*selectOption.Options.Ungrouped, model); ok {
-				return selectOption.Id, value, true
+			if choice, ok := modelChoice(*selectOption.Options.Ungrouped, model); ok {
+				return selectOption.Id, choice, true
 			}
 		}
 		if selectOption.Options.Grouped != nil {
 			for _, group := range *selectOption.Options.Grouped {
-				if value, ok := modelChoice(group.Options, model); ok {
-					return selectOption.Id, value, true
+				if choice, ok := modelChoice(group.Options, model); ok {
+					return selectOption.Id, choice, true
 				}
 			}
 		}
 	}
-	return "", "", false
+	return "", sdk.SessionConfigSelectOption{}, false
 }
 
-func modelChoice(choices []sdk.SessionConfigSelectOption, model string) (sdk.SessionConfigValueId, bool) {
+func modelChoice(choices []sdk.SessionConfigSelectOption, model string) (sdk.SessionConfigSelectOption, bool) {
 	for _, choice := range choices {
 		if string(choice.Value) == model {
-			return choice.Value, true
+			return choice, true
 		}
 	}
-	return "", false
+	return sdk.SessionConfigSelectOption{}, false
+}
+
+func currentModel(options []sdk.SessionConfigOption) *agent.Model {
+	for _, option := range options {
+		selectOption := option.Select
+		if selectOption == nil {
+			continue
+		}
+		isModel := selectOption.Category != nil && *selectOption.Category == sdk.SessionConfigOptionCategoryModel
+		if !isModel && selectOption.Id != "model" {
+			continue
+		}
+		current := string(selectOption.CurrentValue)
+		if selectOption.Options.Ungrouped != nil {
+			if choice, ok := modelChoice(*selectOption.Options.Ungrouped, current); ok {
+				return &agent.Model{
+					ID: current, Name: choice.Name, Source: agent.ModelSourceSessionConfig,
+				}
+			}
+		}
+		if selectOption.Options.Grouped != nil {
+			for _, group := range *selectOption.Options.Grouped {
+				if choice, ok := modelChoice(group.Options, current); ok {
+					return &agent.Model{
+						ID: current, Name: choice.Name, Source: agent.ModelSourceSessionConfig,
+					}
+				}
+			}
+		}
+		if current != "" {
+			return &agent.Model{ID: current, Source: agent.ModelSourceSessionConfig}
+		}
+	}
+	return nil
 }
 
 func (r *runner) rpcError(ctx, runCtx context.Context, operation string) error {

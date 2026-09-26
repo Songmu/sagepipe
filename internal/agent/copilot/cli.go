@@ -29,6 +29,9 @@ func NewCLI(options cli.Options) (*CLIRunner, error) {
 
 func (r *CLIRunner) Run(ctx context.Context, req agent.Request) (agent.Response, error) {
 	var response agent.Response
+	if r.options.Model != "" {
+		response.Model = &agent.Model{ID: r.options.Model, Source: agent.ModelSourceExplicit}
+	}
 	if len(req.NativeSchema) != 0 {
 		if _, err := cli.SafeNativeSchema(req.NativeSchema, false); err != nil {
 			return response, err

@@ -28,6 +28,9 @@ func New(options cli.Options) (*Runner, error) {
 }
 
 func (r *Runner) Run(ctx context.Context, req agent.Request) (response agent.Response, err error) {
+	if r.options.Model != "" {
+		response.Model = &agent.Model{ID: r.options.Model, Source: agent.ModelSourceExplicit}
+	}
 	if len(r.options.AllowedTools) != 0 {
 		return response, errors.New("codex CLI: allowed-tools is unsupported")
 	}
