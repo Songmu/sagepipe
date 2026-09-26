@@ -37,7 +37,13 @@ func redactLaunchArgs(args []string) []string {
 	safe := append([]string(nil), args...)
 	for i := 0; i < len(safe); i++ {
 		arg := safe[i]
-		name, _, inline := strings.Cut(arg, "=")
+		name, value, inline := strings.Cut(arg, "=")
+		if !strings.HasPrefix(name, "-") {
+			if sensitiveLaunchValue(arg) {
+				safe[i] = "<redacted>"
+			}
+			continue
+		}
 		if launchArgList(name) {
 			if inline {
 				safe[i] = name + "=<redacted>"
@@ -56,6 +62,10 @@ func redactLaunchArgs(args []string) []string {
 				safe[i+1] = "<redacted>"
 				i++
 			}
+			continue
+		}
+		if inline && sensitiveLaunchValue(value) {
+			safe[i] = name + "=<redacted>"
 		}
 	}
 	return safe
@@ -67,10 +77,14 @@ func launchArgList(name string) bool {
 
 func sensitiveLaunchArg(name string) bool {
 	switch name {
-	case "-p", "--prompt", "--json-schema":
+	case "-p", "--prompt", "--json-schema", "--additional-mcp-config":
 		return true
 	}
-	normalized := strings.NewReplacer("-", "", "_", "").Replace(strings.ToLower(name))
+	return sensitiveLaunchValue(name)
+}
+
+func sensitiveLaunchValue(value string) bool {
+	normalized := strings.NewReplacer("-", "", "_", "").Replace(strings.ToLower(value))
 	for _, marker := range []string{"api", "auth", "credential", "key", "pass", "secret", "token"} {
 		if strings.Contains(normalized, marker) {
 			return true

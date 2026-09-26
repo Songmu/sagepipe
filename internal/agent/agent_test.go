@@ -17,6 +17,11 @@ func TestNewLaunchRedactsSensitiveArguments(t *testing.T) {
 		"--key-file=private-key-file",
 		"--authentication-mode", "private-auth-mode",
 		"--access_token", "private-token",
+		"--additional-mcp-config", `{"env":{"API_TOKEN":"private-mcp-token"}}`,
+		"--acp",
+		`--additional-mcp-config={"headers":{"Authorization":"private-header"}}`,
+		"API_TOKEN=private-positional-token",
+		"--stdio",
 		"--model", "test-model",
 	}
 	launch := NewLaunch("copilot", input, "/tmp/project")
@@ -31,6 +36,11 @@ func TestNewLaunchRedactsSensitiveArguments(t *testing.T) {
 		"--key-file=<redacted>",
 		"--authentication-mode", "<redacted>",
 		"--access_token", "<redacted>",
+		"--additional-mcp-config", "<redacted>",
+		"--acp",
+		"--additional-mcp-config=<redacted>",
+		"<redacted>",
+		"--stdio",
 		"--model", "test-model",
 	}
 	if launch.Command() != "copilot" || launch.CWD() != "/tmp/project" ||
@@ -49,6 +59,11 @@ func TestNewLaunchRedactsSensitiveArguments(t *testing.T) {
 		"--key-file=private-key-file",
 		"--authentication-mode", "private-auth-mode",
 		"--access_token", "private-token",
+		"--additional-mcp-config", `{"env":{"API_TOKEN":"private-mcp-token"}}`,
+		"--acp",
+		`--additional-mcp-config={"headers":{"Authorization":"private-header"}}`,
+		"API_TOKEN=private-positional-token",
+		"--stdio",
 		"--model", "test-model",
 	}) {
 		t.Fatalf("NewLaunch mutated input: %q", input)
