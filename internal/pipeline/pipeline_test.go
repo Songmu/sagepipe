@@ -150,6 +150,8 @@ func TestTransformPromptRequiresEnvelopeAndSchemaValidation(t *testing.T) {
 	f := &fakeRunner{run: func(req agent.Request) (agent.Response, error) {
 		for _, want := range []string{
 			"Return exactly one JSON object with a single `items` array",
+			"Your entire response must be raw JSON beginning with `{` and ending with `}`",
+			"never wrap it in ```json or any other Markdown code fence",
 			"Do not return a bare item or bare array.",
 			"verify the entire response matches this envelope and every item matches the required type or schema",
 			"Each result item must satisfy this JSON Schema:",
@@ -164,6 +166,47 @@ func TestTransformPromptRequiresEnvelopeAndSchemaValidation(t *testing.T) {
 	if code := Run(context.Background(), cfg, strings.NewReader("input\n"), &out, &diag, f); code != 0 {
 		t.Fatalf("exit code = %d, diagnostics: %s", code, diag.String())
 	}
+}
+
+func TestMarkdownJSONFenceIsRemovedWithWarning(t *testing.T) {
+	for _, response := range []string{
+		"```json\n{\"items\":[\"ok\"]}\n```",
+		"```\n{\"items\":[\"ok\"]}\n```",
+		"  ```JSON\r\n{\"items\":[\"ok\"]}\r\n```  ",
+	} {
+		cfg := testConfig("map")
+		var out, diag strings.Builder
+		f := &fakeRunner{run: func(agent.Request) (agent.Response, error) {
+			return agent.Response{Text: response}, nil
+		}}
+		if code := Run(context.Background(), cfg, strings.NewReader("input\n"), &out, &diag, f); code != 0 {
+			t.Fatalf("exit code = %d, diagnostics: %s", code, diag.String())
+		}
+		if out.String() != "ok\n" {
+			t.Errorf("output = %q", out.String())
+		}
+		checkDiagnostic(t, diag.String(), "markdown_fence_removed", 1)
+		if strings.Contains(diag.String(), "invalid_response") {
+			t.Errorf("valid fenced response was rejected: %s", diag.String())
+		}
+	}
+}
+
+func TestMarkdownFenceWithSurroundingProseRemainsInvalid(t *testing.T) {
+	cfg := testConfig("map")
+	cfg.Verbosity = 2
+	response := "Here is the result:\n```json\n{\"items\":[\"ok\"]}\n```"
+	var out, diag strings.Builder
+	f := &fakeRunner{run: func(agent.Request) (agent.Response, error) {
+		return agent.Response{Text: response}, nil
+	}}
+	if code := Run(context.Background(), cfg, strings.NewReader("input\n"), &out, &diag, f); code != 1 {
+		t.Fatalf("exit code = %d, diagnostics: %s", code, diag.String())
+	}
+	if out.Len() != 0 || strings.Contains(diag.String(), `"code":"markdown_fence_removed"`) {
+		t.Fatalf("response was partially accepted: output=%q diagnostics=%s", out.String(), diag.String())
+	}
+	checkDiagnostic(t, diag.String(), "invalid_response", 1)
 }
 
 func TestAgentFailureDetailsAreDebugOnly(t *testing.T) {

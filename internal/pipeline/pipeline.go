@@ -235,7 +235,7 @@ func (p *processor) processMap(rec record) error {
 		}
 		return nil
 	}
-	payload, count, err := p.parseOutput(resp)
+	payload, count, err := p.parseOutput(resp, rec.line)
 	if err != nil {
 		p.failures++
 		p.reportInvalidResponse(err, resp, rec.line)
@@ -296,7 +296,7 @@ func (p *processor) runReduce(first *record) int {
 		p.reportAgentFailure(err, 0, "agent")
 		return 2
 	}
-	payload, count, err := p.parseOutput(resp)
+	payload, count, err := p.parseOutput(resp, 0)
 	if err != nil {
 		p.reportInvalidResponse(err, resp, 0)
 		return 2
