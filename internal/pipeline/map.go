@@ -125,7 +125,7 @@ func (p *processor) runMapConcurrent(first *record) int {
 					}
 					continue
 				}
-				payload, count, err := p.parseOutput(current.resp)
+				payload, count, err := p.parseOutput(current.resp, current.line)
 				if err != nil {
 					p.failures++
 					p.reportInvalidResponse(err, current.resp, current.line)

@@ -235,7 +235,7 @@ func (p *processor) processMap(rec record) error {
 		}
 		return nil
 	}
-	payload, count, err := p.parseOutput(resp)
+	payload, count, err := p.parseOutput(resp, rec.line)
 	if err != nil {
 		p.failures++
 		p.reportInvalidResponse(err, resp, rec.line)
@@ -296,7 +296,7 @@ func (p *processor) runReduce(first *record) int {
 		p.reportAgentFailure(err, 0, "agent")
 		return 2
 	}
-	payload, count, err := p.parseOutput(resp)
+	payload, count, err := p.parseOutput(resp, 0)
 	if err != nil {
 		p.reportInvalidResponse(err, resp, 0)
 		return 2
@@ -333,7 +333,12 @@ func (p *processor) runAuto() int {
 				return 2
 			}
 			var agentReason string
-			mode, agentReason, err = parseModeResponse(response.Text)
+			modeResponse, unwrapped := unwrapJSONCodeFence(response.Text)
+			if unwrapped {
+				p.diag.log(slog.LevelWarn, "markdown_fence_removed", "mode",
+					"Removed Markdown code fence from agent response", 0)
+			}
+			mode, agentReason, err = parseModeResponse(modeResponse)
 			if err != nil {
 				p.diag.log(slog.LevelError, "invalid_mode_response", "mode", "Agent returned an invalid mode decision", 0)
 				text, truncated := diagnosticResponse(response.Text)

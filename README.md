@@ -81,8 +81,11 @@ The agent must return a single JSON object of the form `{"items":[...]}`.
 sagepipe checks the entire answer and validates every item before writing
 any result from that call. Invalid input rows and failed `map` calls are
 reported on standard error without inserting error records into standard
-output. For `reduce`, invalid input rows are excluded but still count as
-failures; a failed aggregate call produces no aggregate output.
+output. A response consisting solely of one `json` or unlabelled Markdown code
+block is unwrapped before validation and produces a `markdown_fence_removed`
+warning; surrounding prose remains invalid. For `reduce`, invalid input rows
+are excluded but still count as failures; a failed aggregate call produces no
+aggregate output.
 
 Exit status is `0` on success, `1` after completing input with rejected
 records, and `2` for failures that prevent completing the run. Standard
