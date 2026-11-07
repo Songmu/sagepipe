@@ -28,6 +28,14 @@ type transformResult struct {
 	outputErr error
 }
 
+type modeResult struct {
+	response agent.Response
+	mode     string
+	reason   string
+	agentErr error
+	parseErr error
+}
+
 type jsonResponseError struct {
 	err error
 }
@@ -225,18 +233,10 @@ func (p *processor) transformWithRetry(
 	retried := false
 	for attempt := 0; attempt <= maxAgentRetries; attempt++ {
 		response, err := p.invokeWithContext(ctx, prompt, nativeSchema)
-		if err != nil {
-			if !errors.Is(err, agent.ErrNoTextResponse) || attempt == maxAgentRetries || ctx.Err() != nil {
-				return transformResult{agentErr: err}
-			}
-			p.logRetry("agent", line, attempt+1, "empty_response", "repeat_original")
-			prompt = originalPrompt
-			retried = true
-			continue
-		}
-		if isEmptyResponse(response.Text) {
-			if attempt == maxAgentRetries {
-				return transformResult{agentErr: agent.ErrNoTextResponse}
+		responseErr, retryable := classifyResponseError(ctx, response, err)
+		if responseErr != nil {
+			if !retryable || attempt == maxAgentRetries {
+				return transformResult{agentErr: responseErr}
 			}
 			p.logRetry("agent", line, attempt+1, "empty_response", "repeat_original")
 			prompt = originalPrompt
@@ -263,25 +263,15 @@ func (p *processor) transformWithRetry(
 	panic("unreachable")
 }
 
-func (p *processor) modeWithRetry(
-	originalPrompt string,
-) (agent.Response, string, string, error, error) {
+func (p *processor) modeWithRetry(originalPrompt string) modeResult {
 	prompt := originalPrompt
 	retried := false
 	for attempt := 0; attempt <= maxAgentRetries; attempt++ {
 		response, err := p.invoke(prompt, nil)
-		if err != nil {
-			if !errors.Is(err, agent.ErrNoTextResponse) || attempt == maxAgentRetries || p.ctx.Err() != nil {
-				return agent.Response{}, "", "", err, nil
-			}
-			p.logRetry("mode", 0, attempt+1, "empty_response", "repeat_original")
-			prompt = originalPrompt
-			retried = true
-			continue
-		}
-		if isEmptyResponse(response.Text) {
-			if attempt == maxAgentRetries {
-				return agent.Response{}, "", "", agent.ErrNoTextResponse, nil
+		responseErr, retryable := classifyResponseError(p.ctx, response, err)
+		if responseErr != nil {
+			if !retryable || attempt == maxAgentRetries {
+				return modeResult{agentErr: responseErr}
 			}
 			p.logRetry("mode", 0, attempt+1, "empty_response", "repeat_original")
 			prompt = originalPrompt
@@ -298,19 +288,30 @@ func (p *processor) modeWithRetry(
 			if retried {
 				p.recovered.Add(1)
 			}
-			return response, mode, reason, nil, nil
+			return modeResult{response: response, mode: mode, reason: reason}
 		}
 		nextPrompt, retryReason, strategy, retryable := jsonRetryPrompt(
 			originalPrompt, response.Text, parseErr,
 		)
 		if !retryable || attempt == maxAgentRetries {
-			return response, "", "", nil, parseErr
+			return modeResult{response: response, parseErr: parseErr}
 		}
 		p.logRetry("mode", 0, attempt+1, retryReason, strategy)
 		prompt = nextPrompt
 		retried = true
 	}
 	panic("unreachable")
+}
+
+func classifyResponseError(ctx context.Context, response agent.Response, err error) (responseErr error, retryable bool) {
+	if err != nil {
+		return err, errors.Is(err, agent.ErrNoTextResponse) && ctx.Err() == nil
+	}
+	// Successful calls with empty text retain their retry behavior even after cancellation.
+	if isEmptyResponse(response.Text) {
+		return agent.ErrNoTextResponse, true
+	}
+	return nil, false
 }
 
 func (p *processor) logRetry(stage string, line, retry int, reason, strategy string) {
