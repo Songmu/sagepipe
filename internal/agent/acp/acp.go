@@ -360,27 +360,35 @@ func modelOption(
 ) (sdk.SessionConfigId, sdk.SessionConfigSelectOption, bool) {
 	for _, option := range options {
 		selectOption := option.Select
-		if selectOption == nil {
+		if !isModelOption(selectOption) {
 			continue
 		}
-		isModel := selectOption.Category != nil && *selectOption.Category == sdk.SessionConfigOptionCategoryModel
-		if !isModel && selectOption.Id != "model" {
-			continue
-		}
-		if selectOption.Options.Ungrouped != nil {
-			if choice, ok := modelChoice(*selectOption.Options.Ungrouped, model); ok {
-				return selectOption.Id, choice, true
-			}
-		}
-		if selectOption.Options.Grouped != nil {
-			for _, group := range *selectOption.Options.Grouped {
-				if choice, ok := modelChoice(group.Options, model); ok {
-					return selectOption.Id, choice, true
-				}
-			}
+		if choice, ok := selectChoice(selectOption.Options, model); ok {
+			return selectOption.Id, choice, true
 		}
 	}
 	return "", sdk.SessionConfigSelectOption{}, false
+}
+
+func isModelOption(option *sdk.SessionConfigOptionSelect) bool {
+	return option != nil && (option.Id == "model" ||
+		(option.Category != nil && *option.Category == sdk.SessionConfigOptionCategoryModel))
+}
+
+func selectChoice(options sdk.SessionConfigSelectOptions, value string) (sdk.SessionConfigSelectOption, bool) {
+	if options.Ungrouped != nil {
+		if choice, ok := modelChoice(*options.Ungrouped, value); ok {
+			return choice, true
+		}
+	}
+	if options.Grouped != nil {
+		for _, group := range *options.Grouped {
+			if choice, ok := modelChoice(group.Options, value); ok {
+				return choice, true
+			}
+		}
+	}
+	return sdk.SessionConfigSelectOption{}, false
 }
 
 func modelChoice(choices []sdk.SessionConfigSelectOption, model string) (sdk.SessionConfigSelectOption, bool) {
@@ -395,33 +403,15 @@ func modelChoice(choices []sdk.SessionConfigSelectOption, model string) (sdk.Ses
 func currentModel(options []sdk.SessionConfigOption) *agent.Model {
 	for _, option := range options {
 		selectOption := option.Select
-		if selectOption == nil {
-			continue
-		}
-		isModel := selectOption.Category != nil && *selectOption.Category == sdk.SessionConfigOptionCategoryModel
-		if !isModel && selectOption.Id != "model" {
+		if !isModelOption(selectOption) {
 			continue
 		}
 		current := string(selectOption.CurrentValue)
-		if selectOption.Options.Ungrouped != nil {
-			if choice, ok := modelChoice(*selectOption.Options.Ungrouped, current); ok {
-				return &agent.Model{
-					ID: current, Name: choice.Name, Source: agent.ModelSourceSessionConfig,
-				}
-			}
+		choice, ok := selectChoice(selectOption.Options, current)
+		if !ok && current == "" {
+			continue
 		}
-		if selectOption.Options.Grouped != nil {
-			for _, group := range *selectOption.Options.Grouped {
-				if choice, ok := modelChoice(group.Options, current); ok {
-					return &agent.Model{
-						ID: current, Name: choice.Name, Source: agent.ModelSourceSessionConfig,
-					}
-				}
-			}
-		}
-		if current != "" {
-			return &agent.Model{ID: current, Source: agent.ModelSourceSessionConfig}
-		}
+		return &agent.Model{ID: current, Name: choice.Name, Source: agent.ModelSourceSessionConfig}
 	}
 	return nil
 }
