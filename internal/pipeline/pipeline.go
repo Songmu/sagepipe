@@ -236,9 +236,13 @@ func (p *processor) processMap(rec record) error {
 		return err
 	}
 	result := p.transformWithRetry(p.ctx, p.transformPrompt(string(data)), p.nativeItemsSchema(), rec.line)
+	return p.emitMapResult(result, rec.line)
+}
+
+func (p *processor) emitMapResult(result transformResult, line int) error {
 	if result.agentErr != nil {
 		p.failures++
-		p.reportAgentFailure(result.agentErr, rec.line, "agent")
+		p.reportAgentFailure(result.agentErr, line, "agent")
 		if p.ctx.Err() != nil {
 			return result.agentErr
 		}
@@ -246,13 +250,10 @@ func (p *processor) processMap(rec record) error {
 	}
 	if result.outputErr != nil {
 		p.failures++
-		p.reportInvalidResponse(result.outputErr, result.response, rec.line)
+		p.reportInvalidResponse(result.outputErr, result.response, line)
 		return nil
 	}
-	if err := p.emit(result.payload, result.count); err != nil {
-		return err
-	}
-	return nil
+	return p.emit(result.payload, result.count)
 }
 
 func (p *processor) emit(payload []byte, count int) error {
