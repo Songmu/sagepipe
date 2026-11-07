@@ -1,5 +1,16 @@
 # Changelog
 
+## [v0.0.4](https://github.com/Songmu/sagepipe/compare/v0.0.3...v0.0.4) - 2026-11-07
+
+- chore(deps): Bump the actions group with 2 updates by @dependabot[bot] in https://github.com/Songmu/sagepipe/pull/38
+- Update GitHub Actions and adopt a dependency lockfile by @Songmu in https://github.com/Songmu/sagepipe/pull/48
+- Refactor configuration frontmatter parsing into focused readers by @Songmu in https://github.com/Songmu/sagepipe/pull/44
+- refactor: simplify YAML schema serialization by @Songmu in https://github.com/Songmu/sagepipe/pull/45
+- Refactor concurrent map coordination and shared result emission by @Songmu in https://github.com/Songmu/sagepipe/pull/47
+- Make ACP setup and model selection easier to follow by @Songmu in https://github.com/Songmu/sagepipe/pull/49
+- refactor: clarify mode and transform retry handling by @Songmu in https://github.com/Songmu/sagepipe/pull/46
+- ci: include cross-package executions in coverage by @Songmu in https://github.com/Songmu/sagepipe/pull/50
+
 ## [v0.0.3](https://github.com/Songmu/sagepipe/compare/v0.0.2...v0.0.3) - 2026-09-26
 
 - update readme.md by @Songmu in https://github.com/Songmu/sagepipe/pull/33
