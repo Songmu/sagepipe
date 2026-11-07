@@ -641,6 +641,95 @@ func TestRunRecyclesAfterProtocolLimit(t *testing.T) {
 	}
 }
 
+func TestModelSelections(t *testing.T) {
+	category := sdk.SessionConfigOptionCategoryModel
+	otherCategory := sdk.SessionConfigOptionCategory("other")
+	ungrouped := sdk.SessionConfigSelectOptionsUngrouped{
+		{Name: "Ungrouped Model", Value: "selected"},
+	}
+	grouped := sdk.SessionConfigSelectOptionsGrouped{
+		{Group: "empty", Name: "Empty"},
+		{Group: "models", Name: "Models", Options: []sdk.SessionConfigSelectOption{
+			{Name: "Grouped Model", Value: "selected"},
+		}},
+	}
+	unmatched := sdk.SessionConfigSelectOptionsUngrouped{
+		{Name: "Other Model", Value: "other"},
+	}
+	for _, tt := range []struct {
+		name        string
+		id          sdk.SessionConfigId
+		category    *sdk.SessionConfigOptionCategory
+		options     sdk.SessionConfigSelectOptions
+		current     sdk.SessionConfigValueId
+		wantName    string
+		wantFound   bool
+		wantCurrent *agent.Model
+	}{
+		{
+			name: "grouped category", id: "custom-model", category: &category,
+			options: sdk.SessionConfigSelectOptions{Grouped: &grouped}, current: "selected",
+			wantName: "Grouped Model", wantFound: true,
+			wantCurrent: &agent.Model{ID: "selected", Name: "Grouped Model", Source: agent.ModelSourceSessionConfig},
+		},
+		{
+			name: "model ID without category", id: "model",
+			options: sdk.SessionConfigSelectOptions{Ungrouped: &ungrouped}, current: "selected",
+			wantName: "Ungrouped Model", wantFound: true,
+			wantCurrent: &agent.Model{ID: "selected", Name: "Ungrouped Model", Source: agent.ModelSourceSessionConfig},
+		},
+		{
+			name: "model ID with other category", id: "model", category: &otherCategory,
+			options: sdk.SessionConfigSelectOptions{Grouped: &grouped}, current: "selected",
+			wantName: "Grouped Model", wantFound: true,
+			wantCurrent: &agent.Model{ID: "selected", Name: "Grouped Model", Source: agent.ModelSourceSessionConfig},
+		},
+		{
+			name: "ungrouped takes precedence", id: "model", category: &category,
+			options: sdk.SessionConfigSelectOptions{Ungrouped: &ungrouped, Grouped: &grouped}, current: "selected",
+			wantName: "Ungrouped Model", wantFound: true,
+			wantCurrent: &agent.Model{ID: "selected", Name: "Ungrouped Model", Source: agent.ModelSourceSessionConfig},
+		},
+		{
+			name: "grouped after ungrouped miss", id: "model", category: &category,
+			options: sdk.SessionConfigSelectOptions{Ungrouped: &unmatched, Grouped: &grouped}, current: "selected",
+			wantName: "Grouped Model", wantFound: true,
+			wantCurrent: &agent.Model{ID: "selected", Name: "Grouped Model", Source: agent.ModelSourceSessionConfig},
+		},
+		{
+			name: "missing current choice falls back to ID", id: "model", category: &category,
+			options: sdk.SessionConfigSelectOptions{Ungrouped: &unmatched}, current: "removed",
+			wantCurrent: &agent.Model{ID: "removed", Source: agent.ModelSourceSessionConfig},
+		},
+		{
+			name: "empty current without choices", id: "model", category: &category,
+		},
+		{
+			name: "unrelated select is ignored", id: "other", category: &otherCategory,
+			options: sdk.SessionConfigSelectOptions{Ungrouped: &ungrouped}, current: "selected",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			options := []sdk.SessionConfigOption{
+				{},
+				{Select: &sdk.SessionConfigOptionSelect{
+					Id: tt.id, Category: tt.category, CurrentValue: tt.current, Options: tt.options,
+				}},
+			}
+			id, choice, found := modelOption(options, "selected")
+			if found != tt.wantFound {
+				t.Fatalf("modelOption found = %v, want %v", found, tt.wantFound)
+			}
+			if found && (id != tt.id || choice.Value != "selected" || choice.Name != tt.wantName) {
+				t.Fatalf("modelOption = %q, %+v", id, choice)
+			}
+			if got := currentModel(options); !reflect.DeepEqual(got, tt.wantCurrent) {
+				t.Fatalf("currentModel = %+v, want %+v", got, tt.wantCurrent)
+			}
+		})
+	}
+}
+
 func TestModelAndToolsMustBeSupported(t *testing.T) {
 	opts := mockOptions(t)
 	opts.AllowedTools = "Read"
