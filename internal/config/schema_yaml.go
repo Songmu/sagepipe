@@ -44,39 +44,9 @@ func writeSchemaJSON(buf *bytes.Buffer, node ast.Node, active map[ast.Node]bool)
 
 	switch n := node.(type) {
 	case *ast.MappingNode:
-		buf.WriteByte('{')
-		seen := make(map[string]bool, len(n.Values))
-		for i, entry := range n.Values {
-			var key string
-			if err := yaml.NodeToValue(entry.Key, &key); err != nil {
-				return fmt.Errorf("schema mapping key: %w", err)
-			}
-			if seen[key] {
-				return fmt.Errorf("duplicate schema key %q", key)
-			}
-			seen[key] = true
-			if i > 0 {
-				buf.WriteByte(',')
-			}
-			encoded, _ := json.Marshal(key)
-			buf.Write(encoded)
-			buf.WriteByte(':')
-			if err := writeSchemaJSON(buf, entry.Value, active); err != nil {
-				return err
-			}
-		}
-		buf.WriteByte('}')
+		return writeSchemaMapping(buf, n, active)
 	case *ast.SequenceNode:
-		buf.WriteByte('[')
-		for i, value := range n.Values {
-			if i > 0 {
-				buf.WriteByte(',')
-			}
-			if err := writeSchemaJSON(buf, value, active); err != nil {
-				return err
-			}
-		}
-		buf.WriteByte(']')
+		return writeSchemaSequence(buf, n, active)
 	case *ast.StringNode:
 		encoded, _ := json.Marshal(n.Value)
 		buf.Write(encoded)
@@ -98,6 +68,46 @@ func writeSchemaJSON(buf *bytes.Buffer, node ast.Node, active map[ast.Node]bool)
 	default:
 		return fmt.Errorf("unsupported schema YAML node %T", node)
 	}
+	return nil
+}
+
+func writeSchemaMapping(buf *bytes.Buffer, node *ast.MappingNode, active map[ast.Node]bool) error {
+	buf.WriteByte('{')
+	seen := make(map[string]bool, len(node.Values))
+	for i, entry := range node.Values {
+		var key string
+		if err := yaml.NodeToValue(entry.Key, &key); err != nil {
+			return fmt.Errorf("schema mapping key: %w", err)
+		}
+		if seen[key] {
+			return fmt.Errorf("duplicate schema key %q", key)
+		}
+		seen[key] = true
+		if i > 0 {
+			buf.WriteByte(',')
+		}
+		encoded, _ := json.Marshal(key)
+		buf.Write(encoded)
+		buf.WriteByte(':')
+		if err := writeSchemaJSON(buf, entry.Value, active); err != nil {
+			return err
+		}
+	}
+	buf.WriteByte('}')
+	return nil
+}
+
+func writeSchemaSequence(buf *bytes.Buffer, node *ast.SequenceNode, active map[ast.Node]bool) error {
+	buf.WriteByte('[')
+	for i, value := range node.Values {
+		if i > 0 {
+			buf.WriteByte(',')
+		}
+		if err := writeSchemaJSON(buf, value, active); err != nil {
+			return err
+		}
+	}
+	buf.WriteByte(']')
 	return nil
 }
 
