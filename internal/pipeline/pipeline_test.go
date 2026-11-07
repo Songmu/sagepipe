@@ -1157,23 +1157,32 @@ func TestAutoRestoresModePromptAfterEmptyResponse(t *testing.T) {
 
 func TestAutoStopsAfterModeRetryExhaustion(t *testing.T) {
 	for _, tc := range []struct {
-		name     string
-		response agent.Response
-		err      error
-		code     string
+		name          string
+		response      agent.Response
+		finalResponse string
+		err           error
+		code          string
 	}{
 		{name: "empty text", response: agent.Response{Text: " \n"}, code: "mode_detection_failed"},
 		{name: "runner error", err: agent.ErrNoTextResponse, code: "mode_detection_failed"},
-		{name: "incomplete JSON", response: agent.Response{Text: `{"mode":`}, code: "invalid_mode_response"},
+		{name: "incomplete JSON", response: agent.Response{Text: `{"mode":`},
+			finalResponse: `{"mode":"reduce","reason":"final response`, code: "invalid_mode_response"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := testConfig("auto")
 			cfg.Prompt = "Translate each record"
 			cfg.Verbosity = 1
+			if tc.finalResponse != "" {
+				cfg.Verbosity = 2
+			}
 			var out, diag strings.Builder
-			f := &fakeRunner{run: func(agent.Request) (agent.Response, error) {
+			f := &fakeRunner{}
+			f.run = func(agent.Request) (agent.Response, error) {
+				if tc.finalResponse != "" && len(f.calls) == 3 {
+					return agent.Response{Text: tc.finalResponse}, nil
+				}
 				return tc.response, tc.err
-			}}
+			}
 			if code := Run(context.Background(), cfg, strings.NewReader("input\n"), &out, &diag, f); code != 2 {
 				t.Fatalf("exit code = %d, diagnostics: %s", code, diag.String())
 			}
@@ -1185,6 +1194,13 @@ func TestAutoStopsAfterModeRetryExhaustion(t *testing.T) {
 				t.Fatalf("unexpected retry accounting: %s", diag.String())
 			}
 			checkDiagnostic(t, diag.String(), tc.code, 0)
+			if tc.finalResponse != "" {
+				checkDiagnostic(t, diag.String(), "invalid_mode_response_detail", 0)
+				encoded, _ := json.Marshal(tc.finalResponse)
+				if !strings.Contains(diag.String(), `"response":`+string(encoded)) {
+					t.Fatalf("final mode response missing from diagnostics: %s", diag.String())
+				}
+			}
 		})
 	}
 }
