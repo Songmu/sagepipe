@@ -337,22 +337,22 @@ func (p *processor) runAuto() int {
 		called := false
 		if strings.TrimSpace(p.cfg.Prompt) != "" {
 			called = true
-			response, agentMode, agentReason, agentErr, parseErr := p.modeWithRetry(modePrompt(p.cfg.Prompt))
-			if agentErr != nil {
-				p.reportAgentFailure(agentErr, 0, "mode")
+			result := p.modeWithRetry(modePrompt(p.cfg.Prompt))
+			if result.agentErr != nil {
+				p.reportAgentFailure(result.agentErr, 0, "mode")
 				return 2
 			}
-			if parseErr != nil {
+			if result.parseErr != nil {
 				p.diag.log(slog.LevelError, "invalid_mode_response", "mode", "Agent returned an invalid mode decision", 0)
-				text, truncated := diagnosticResponse(response.Text)
+				text, truncated := diagnosticResponse(result.response.Text)
 				p.diag.log(slog.LevelDebug, "invalid_mode_response_detail", "mode",
-					"Agent mode response validation failed", 0, "reason", parseErr.Error(), "response", text,
-					"response_bytes", len(response.Text), "response_truncated", truncated)
+					"Agent mode response validation failed", 0, "reason", result.parseErr.Error(), "response", text,
+					"response_bytes", len(result.response.Text), "response_truncated", truncated)
 				return 2
 			}
-			mode = agentMode
+			mode = result.mode
 			p.diag.log(slog.LevelDebug, "mode_reason", "mode", "Agent processing mode rationale", 0,
-				"agent_mode", mode, "reason", agentReason)
+				"agent_mode", mode, "reason", result.reason)
 			switch mode {
 			case "reduce":
 				reason = "The agent determined cross-record context is required"

@@ -150,38 +150,61 @@ func TestConcurrentAutoMapIncludesFirstRecord(t *testing.T) {
 }
 
 func TestConcurrentMapCancelsActiveWorkOnOutputFailure(t *testing.T) {
-	cfg := testConfig("map")
-	cfg.Concurrency = 2
-	started := make(chan struct{})
-	stopped := make(chan struct{})
-	runner := &parallelRunner{run: func(ctx context.Context, req agent.Request) (agent.Response, error) {
-		if strings.HasSuffix(req.Prompt, `"two"`) {
-			close(started)
-			<-ctx.Done()
-			close(stopped)
-			return agent.Response{}, ctx.Err()
-		}
-		<-started
-		return agent.Response{Text: `{"items":["one"]}`}, nil
-	}}
-	var diag strings.Builder
-	done := make(chan int, 1)
-	go func() {
-		done <- Run(context.Background(), cfg, strings.NewReader("one\ntwo\n"), brokenWriter{}, &diag, runner)
-	}()
-	select {
-	case code := <-done:
-		if code != 2 || runner.closed.Load() != 1 {
-			t.Errorf("code=%d closed=%d diagnostics=%s", code, runner.closed.Load(), diag.String())
-		}
-		select {
-		case <-stopped:
-		default:
-			t.Error("runner closed before active work stopped")
-		}
-		checkDiagnostic(t, diag.String(), "output_write_failed", 0)
-	case <-time.After(2 * time.Second):
-		t.Fatal("map did not cancel active work")
+	for _, runnerErr := range []error{context.Canceled, agent.ErrNoTextResponse} {
+		t.Run(runnerErr.Error(), func(t *testing.T) {
+			parent, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			cfg := testConfig("map")
+			cfg.Concurrency = 2
+			cfg.Timeout = 0
+			started := make(chan struct{})
+			stopped := make(chan struct{})
+			var calls atomic.Int32
+			runner := &parallelRunner{run: func(ctx context.Context, req agent.Request) (agent.Response, error) {
+				calls.Add(1)
+				if strings.HasSuffix(req.Prompt, `"two"`) {
+					if ctx.Err() == nil {
+						close(started)
+						<-ctx.Done()
+						close(stopped)
+					}
+					if parent.Err() != nil {
+						t.Error("parent context cancelled with worker context")
+					}
+					return agent.Response{}, runnerErr
+				}
+				<-started
+				return agent.Response{Text: `{"items":["one"]}`}, nil
+			}}
+			var diag strings.Builder
+			done := make(chan int, 1)
+			go func() {
+				done <- Run(parent, cfg, strings.NewReader("one\ntwo\n"), brokenWriter{}, &diag, runner)
+			}()
+			select {
+			case code := <-done:
+				if code != 2 || runner.closed.Load() != 1 {
+					t.Errorf("code=%d closed=%d diagnostics=%s", code, runner.closed.Load(), diag.String())
+				}
+				if parent.Err() != nil || calls.Load() != 2 || strings.Contains(diag.String(), `"code":"agent_retry"`) {
+					t.Errorf("parent=%v calls=%d diagnostics=%s", parent.Err(), calls.Load(), diag.String())
+				}
+				select {
+				case <-stopped:
+				default:
+					t.Error("runner closed before active work stopped")
+				}
+				checkDiagnostic(t, diag.String(), "output_write_failed", 0)
+			case <-time.After(2 * time.Second):
+				cancel()
+				select {
+				case <-done:
+				case <-time.After(2 * time.Second):
+					t.Fatal("map did not stop after cleanup cancellation")
+				}
+				t.Fatal("map did not cancel active work")
+			}
+		})
 	}
 }
 

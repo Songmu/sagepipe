@@ -1095,6 +1095,150 @@ func TestAutoRemovesModeResponseMarkdownFence(t *testing.T) {
 	}
 }
 
+func TestAutoRestoresModePromptAfterEmptyResponse(t *testing.T) {
+	for _, runnerError := range []bool{false, true} {
+		t.Run(fmt.Sprintf("runner_error=%t", runnerError), func(t *testing.T) {
+			cfg := testConfig("auto")
+			cfg.Prompt = "Translate each record"
+			cfg.Verbosity = 1
+			var out, diag strings.Builder
+			f := &fakeRunner{}
+			f.run = func(req agent.Request) (agent.Response, error) {
+				switch len(f.calls) {
+				case 1:
+					return agent.Response{Text: `{"mode":"map","reason":"independent`}, nil
+				case 2:
+					if !strings.Contains(req.Prompt, "Repair an incomplete agent response.") {
+						t.Errorf("mode repair prompt missing: %s", req.Prompt)
+					}
+					if runnerError {
+						return agent.Response{}, fmt.Errorf("runner: %w", agent.ErrNoTextResponse)
+					}
+					return agent.Response{Text: " \t\r\n"}, nil
+				case 3:
+					if req.Prompt != f.calls[0].Prompt {
+						t.Errorf("empty response did not restore original mode prompt: %s", req.Prompt)
+					}
+					return agent.Response{Text: `{"mode":"map","reason":"independent"}`}, nil
+				default:
+					return agent.Response{Text: `{"items":["translated"]}`}, nil
+				}
+			}
+			if code := Run(context.Background(), cfg, strings.NewReader("input\n"), &out, &diag, f); code != 0 {
+				t.Fatalf("exit code = %d, diagnostics: %s", code, diag.String())
+			}
+			if out.String() != "translated\n" || len(f.calls) != 4 || f.closed != 1 {
+				t.Fatalf("output=%q calls=%d closed=%d", out.String(), len(f.calls), f.closed)
+			}
+			retries := 0
+			for part := range strings.SplitSeq(strings.TrimSpace(diag.String()), "\n") {
+				var entry map[string]any
+				if err := json.Unmarshal([]byte(part), &entry); err != nil {
+					t.Fatal(err)
+				}
+				if entry["code"] != "agent_retry" {
+					continue
+				}
+				retries++
+				if entry["stage"] != "mode" || entry["line"] != nil || entry["retry"] != float64(retries) {
+					t.Errorf("unexpected retry diagnostic: %v", entry)
+				}
+				if retries == 2 && (entry["reason"] != "empty_response" || entry["strategy"] != "repeat_original") {
+					t.Errorf("unexpected empty response retry: %v", entry)
+				}
+			}
+			if retries != 2 || !strings.Contains(diag.String(), `"retries":2`) ||
+				!strings.Contains(diag.String(), `"recovered":1`) {
+				t.Fatalf("missing retry accounting: %s", diag.String())
+			}
+		})
+	}
+}
+
+func TestAutoStopsAfterModeRetryExhaustion(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		response      agent.Response
+		finalResponse string
+		err           error
+		code          string
+	}{
+		{name: "empty text", response: agent.Response{Text: " \n"}, code: "mode_detection_failed"},
+		{name: "runner error", err: agent.ErrNoTextResponse, code: "mode_detection_failed"},
+		{name: "incomplete JSON", response: agent.Response{Text: `{"mode":`},
+			finalResponse: `{"mode":"reduce","reason":"final response`, code: "invalid_mode_response"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := testConfig("auto")
+			cfg.Prompt = "Translate each record"
+			cfg.Verbosity = 1
+			if tc.finalResponse != "" {
+				cfg.Verbosity = 2
+			}
+			var out, diag strings.Builder
+			f := &fakeRunner{}
+			f.run = func(agent.Request) (agent.Response, error) {
+				if tc.finalResponse != "" && len(f.calls) == 3 {
+					return agent.Response{Text: tc.finalResponse}, nil
+				}
+				return tc.response, tc.err
+			}
+			if code := Run(context.Background(), cfg, strings.NewReader("input\n"), &out, &diag, f); code != 2 {
+				t.Fatalf("exit code = %d, diagnostics: %s", code, diag.String())
+			}
+			if out.Len() != 0 || len(f.calls) != 3 || f.closed != 1 {
+				t.Fatalf("output=%q calls=%d closed=%d", out.String(), len(f.calls), f.closed)
+			}
+			if strings.Count(diag.String(), `"code":"agent_retry"`) != 2 ||
+				!strings.Contains(diag.String(), `"recovered":0`) {
+				t.Fatalf("unexpected retry accounting: %s", diag.String())
+			}
+			checkDiagnostic(t, diag.String(), tc.code, 0)
+			if tc.finalResponse != "" {
+				checkDiagnostic(t, diag.String(), "invalid_mode_response_detail", 0)
+				encoded, _ := json.Marshal(tc.finalResponse)
+				if !strings.Contains(diag.String(), `"response":`+string(encoded)) {
+					t.Fatalf("final mode response missing from diagnostics: %s", diag.String())
+				}
+			}
+		})
+	}
+}
+
+func TestAutoModeRetryCancellation(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		response agent.Response
+		err      error
+		calls    int
+		code     string
+	}{
+		{name: "no text error", err: agent.ErrNoTextResponse, calls: 1, code: "mode_detection_failed"},
+		{name: "cancelled error", err: context.Canceled, calls: 1, code: "agent_cancelled"},
+		{name: "successful empty response", response: agent.Response{Text: " \n"}, calls: 3, code: "mode_detection_failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			cfg := testConfig("auto")
+			cfg.Prompt = "Translate each record"
+			var out, diag strings.Builder
+			f := &fakeRunner{run: func(agent.Request) (agent.Response, error) {
+				cancel()
+				return tc.response, tc.err
+			}}
+			if code := Run(ctx, cfg, strings.NewReader("input\n"), &out, &diag, f); code != 2 {
+				t.Fatalf("exit code = %d, diagnostics: %s", code, diag.String())
+			}
+			if out.Len() != 0 || len(f.calls) != tc.calls || f.closed != 1 ||
+				strings.Count(diag.String(), `"code":"agent_retry"`) != tc.calls-1 {
+				t.Fatalf("output=%q calls=%d closed=%d diagnostics=%s", out.String(), len(f.calls), f.closed, diag.String())
+			}
+			checkDiagnostic(t, diag.String(), tc.code, 0)
+		})
+	}
+}
+
 func TestAutoRepairsIncompleteModeResponse(t *testing.T) {
 	cfg := testConfig("auto")
 	cfg.Prompt = "Translate each record"
