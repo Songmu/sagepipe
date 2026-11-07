@@ -233,7 +233,7 @@ func (p *processor) transformWithRetry(
 	retried := false
 	for attempt := 0; attempt <= maxAgentRetries; attempt++ {
 		response, err := p.invokeWithContext(ctx, prompt, nativeSchema)
-		responseErr, retryable := classifyResponseError(ctx, response, err)
+		retryable, responseErr := classifyResponseError(ctx, response, err)
 		if responseErr != nil {
 			if !retryable || attempt == maxAgentRetries {
 				return transformResult{agentErr: responseErr}
@@ -268,7 +268,7 @@ func (p *processor) modeWithRetry(originalPrompt string) modeResult {
 	retried := false
 	for attempt := 0; attempt <= maxAgentRetries; attempt++ {
 		response, err := p.invoke(prompt, nil)
-		responseErr, retryable := classifyResponseError(p.ctx, response, err)
+		retryable, responseErr := classifyResponseError(p.ctx, response, err)
 		if responseErr != nil {
 			if !retryable || attempt == maxAgentRetries {
 				return modeResult{agentErr: responseErr}
@@ -303,15 +303,15 @@ func (p *processor) modeWithRetry(originalPrompt string) modeResult {
 	panic("unreachable")
 }
 
-func classifyResponseError(ctx context.Context, response agent.Response, err error) (responseErr error, retryable bool) {
+func classifyResponseError(ctx context.Context, response agent.Response, err error) (retryable bool, responseErr error) {
 	if err != nil {
-		return err, errors.Is(err, agent.ErrNoTextResponse) && ctx.Err() == nil
+		return errors.Is(err, agent.ErrNoTextResponse) && ctx.Err() == nil, err
 	}
 	// Successful calls with empty text retain their retry behavior even after cancellation.
 	if isEmptyResponse(response.Text) {
-		return agent.ErrNoTextResponse, true
+		return true, agent.ErrNoTextResponse
 	}
-	return nil, false
+	return false, nil
 }
 
 func (p *processor) logRetry(stage string, line, retry int, reason, strategy string) {
