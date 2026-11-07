@@ -168,6 +168,32 @@ func (r *runner) initialize(ctx context.Context) error {
 	return nil
 }
 
+func (r *runner) prepareConnection(ctx context.Context, onLaunch func(agent.Launch)) (recycle bool, err error) {
+	if r.conn != nil {
+		select {
+		case <-r.conn.Done():
+			r.stopProcess(true)
+		default:
+		}
+	}
+	if r.conn == nil {
+		if err := r.start(ctx, onLaunch); err != nil {
+			return false, err
+		}
+		if err := r.initialize(ctx); err != nil {
+			return true, err
+		}
+	}
+	select {
+	case <-r.closed:
+		return false, errors.New("ACP connection is closed")
+	case <-r.conn.Done():
+		return true, errors.New("ACP connection was lost")
+	default:
+	}
+	return false, nil
+}
+
 func (r *runner) Run(ctx context.Context, request agent.Request) (response agent.Response, runErr error) {
 	if err := ctx.Err(); err != nil {
 		return agent.Response{}, err
@@ -209,29 +235,9 @@ func (r *runner) Run(ctx context.Context, request agent.Request) (response agent
 			r.stopProcess(true)
 		}
 	}()
-	if r.conn != nil {
-		select {
-		case <-r.conn.Done():
-			r.stopProcess(true)
-		default:
-		}
-	}
-	if r.conn == nil {
-		if err := r.start(ctx, request.OnLaunch); err != nil {
-			return agent.Response{}, err
-		}
-		if err := r.initialize(ctx); err != nil {
-			recycle = true
-			return agent.Response{}, err
-		}
-	}
-	select {
-	case <-r.closed:
-		return agent.Response{}, errors.New("ACP connection is closed")
-	case <-r.conn.Done():
-		recycle = true
-		return agent.Response{}, errors.New("ACP connection was lost")
-	default:
+	if needsRecycle, err := r.prepareConnection(ctx, request.OnLaunch); err != nil {
+		recycle = needsRecycle
+		return agent.Response{}, err
 	}
 	if !r.closeSessions {
 		// Without session/close, release the entire process after this turn.
@@ -282,7 +288,6 @@ func (r *runner) Run(ctx context.Context, request agent.Request) (response agent
 		return agent.Response{}, errors.New("ACP agent returned an empty session ID")
 	}
 	sessionReady <- session.SessionId
-	response.Model = currentModel(session.ConfigOptions)
 	if r.closeSessions {
 		defer func() {
 			// A cancelled connection is being torn down by watch; there is no
@@ -299,22 +304,9 @@ func (r *runner) Run(ctx context.Context, request agent.Request) (response agent
 		}()
 	}
 
-	if r.model != "" {
-		id, choice, ok := modelOption(session.ConfigOptions, r.model)
-		if !ok {
-			return agent.Response{}, errors.New("ACP agent does not offer the requested model")
-		}
-		_, err = r.conn.SetSessionConfigOption(runCtx, sdk.SetSessionConfigOptionRequest{
-			ValueId: &sdk.SetSessionConfigOptionValueId{
-				SessionId: session.SessionId, ConfigId: id, Value: choice.Value,
-			},
-		})
-		if err != nil {
-			return agent.Response{}, r.rpcError(ctx, runCtx, "select ACP model")
-		}
-		response.Model = &agent.Model{
-			ID: string(choice.Value), Name: choice.Name, Source: agent.ModelSourceExplicit,
-		}
+	response.Model, err = r.setupModel(ctx, runCtx, session)
+	if err != nil {
+		return agent.Response{}, err
 	}
 
 	answer := &answer{session: session.SessionId, limit: limit, cancel: cancel}
@@ -353,6 +345,27 @@ func (r *runner) Run(ctx context.Context, request agent.Request) (response agent
 		response.Warnings = []string{"ACP does not support native output schemas; validate the response locally"}
 	}
 	return response, nil
+}
+
+func (r *runner) setupModel(ctx, runCtx context.Context, session sdk.NewSessionResponse) (*agent.Model, error) {
+	if r.model == "" {
+		return currentModel(session.ConfigOptions), nil
+	}
+	id, choice, ok := modelOption(session.ConfigOptions, r.model)
+	if !ok {
+		return nil, errors.New("ACP agent does not offer the requested model")
+	}
+	_, err := r.conn.SetSessionConfigOption(runCtx, sdk.SetSessionConfigOptionRequest{
+		ValueId: &sdk.SetSessionConfigOptionValueId{
+			SessionId: session.SessionId, ConfigId: id, Value: choice.Value,
+		},
+	})
+	if err != nil {
+		return nil, r.rpcError(ctx, runCtx, "select ACP model")
+	}
+	return &agent.Model{
+		ID: string(choice.Value), Name: choice.Name, Source: agent.ModelSourceExplicit,
+	}, nil
 }
 
 func modelOption(
