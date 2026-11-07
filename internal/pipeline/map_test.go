@@ -156,6 +156,7 @@ func TestConcurrentMapCancelsActiveWorkOnOutputFailure(t *testing.T) {
 			defer cancel()
 			cfg := testConfig("map")
 			cfg.Concurrency = 2
+			cfg.Timeout = 0
 			started := make(chan struct{})
 			stopped := make(chan struct{})
 			var calls atomic.Int32
@@ -195,6 +196,12 @@ func TestConcurrentMapCancelsActiveWorkOnOutputFailure(t *testing.T) {
 				}
 				checkDiagnostic(t, diag.String(), "output_write_failed", 0)
 			case <-time.After(2 * time.Second):
+				cancel()
+				select {
+				case <-done:
+				case <-time.After(2 * time.Second):
+					t.Fatal("map did not stop after cleanup cancellation")
+				}
 				t.Fatal("map did not cancel active work")
 			}
 		})
