@@ -324,7 +324,18 @@ func parseFile(c *Config, data []byte, dir string) error {
 		return errors.New("frontmatter must be a mapping")
 	}
 
+	if err := parseExecutionSettings(c, fields, dir); err != nil {
+		return err
+	}
+	if err := parseSchemaSettings(c, fields, dir); err != nil {
+		return err
+	}
+	return parseLimitSettings(c, fields)
+}
+
+func parseExecutionSettings(c *Config, fields map[string]yaml.RawMessage, dir string) error {
 	if raw, ok := fields["agent"]; ok {
+		var err error
 		c.Agent, err = parseAgent(raw, dir)
 		if err != nil {
 			return fmt.Errorf("agent: %w", err)
@@ -359,6 +370,10 @@ func parseFile(c *Config, data []byte, dir string) error {
 	} else if ok {
 		c.AllowedTools = v
 	}
+	return nil
+}
+
+func parseSchemaSettings(c *Config, fields map[string]yaml.RawMessage, dir string) error {
 	if raw, ok := fields["input_schema"]; ok {
 		spec, err := schemaFromYAML(raw, dir)
 		if err != nil {
@@ -373,6 +388,10 @@ func parseFile(c *Config, data []byte, dir string) error {
 		}
 		c.OutputSchema = spec
 	}
+	return nil
+}
+
+func parseLimitSettings(c *Config, fields map[string]yaml.RawMessage) error {
 	for _, entry := range []struct {
 		name   string
 		target *int64
