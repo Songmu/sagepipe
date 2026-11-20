@@ -18,7 +18,7 @@ workflows:
         - 'actions/checkout@v7.0.1'
         - 'reviewdog/action-actionlint@v1.83.0'
         - 'reviewdog/action-misspell@v1.31.0'
-        - 'reviewdog/action-staticcheck@v1.34.0'
+        - 'reviewdog/action-staticcheck@v1.34.1'
     '.github/workflows/tagpr.yaml':
         - 'actions/checkout@v7.0.1'
         - 'actions/setup-go@v7.0.0'
@@ -99,18 +99,18 @@ dependencies:
         commit: 'sha1-c846b6b0996029d2d39540c8ffebebbd957072db'
         owner_id: 48765237
         repo_id: 208637003
-    'reviewdog/action-setup@v1.5.0':
+    'reviewdog/action-setup@d8a7baabd7f3e8544ee4dbde3ee41d0011c3a93f':
         ref: 'v1.5.0'
         commit: 'sha1-d8a7baabd7f3e8544ee4dbde3ee41d0011c3a93f'
         owner_id: 48765237
         repo_id: 286005511
-    'reviewdog/action-staticcheck@v1.34.0':
-        ref: 'v1.34.0'
-        commit: 'sha1-a6155dfbaefb5d8b29f2eda8e6addf2103bb234c'
+    'reviewdog/action-staticcheck@v1.34.1':
+        ref: 'v1.34.1'
+        commit: 'sha1-a9d23e16f283f2cbe6affeae97d9cb3e0d037c3b'
         owner_id: 48765237
         repo_id: 262723301
         uses:
-            - 'reviewdog/action-setup@v1.5.0'
+            - 'reviewdog/action-setup@d8a7baabd7f3e8544ee4dbde3ee41d0011c3a93f'
     'songmu/goxz@v0.13.0':
         ref: 'v0.13.0'
         commit: 'sha1-b7b74d681760746882693f3db7c94a0888a4b714'
